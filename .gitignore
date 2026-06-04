@@ -1,0 +1,12 @@
+.zig-cache/
+zig-out/
+zig-pkg/
+/release/
+/debug/
+/build/
+/build-*/
+/docgen_tmp/
+*.ppm
+*.tmp
+.DS_Store
+*.gb
