@@ -17,7 +17,7 @@ pub fn build(b: *std.Build) void {
     sdl_translate_c.addIncludePath(sdl_dependency.path("include"));
 
     const exe = b.addExecutable(.{
-        .name = "zigb_emu",
+        .name = "ziggy_dmg",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
             .target = target,

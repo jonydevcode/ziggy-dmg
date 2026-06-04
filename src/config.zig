@@ -16,12 +16,14 @@ pub const window = struct {
     pub const width = screen.width * pixel_size;
     pub const height = screen.height * pixel_size;
     // pub const target_fps: f64 = 4_194_304 / 70_224;
-    pub const target_frame_time_ns = 1_000_000_000 * cpu.cycles_per_frame / cpu.clock_hz;
+    // pub const target_frame_time_ns = 1_000_000_000 * cpu.cycles_per_frame / cpu.clock_hz;
 };
 
 /// Gameboy CPU hardware
 pub const cpu = struct {
     // TCAGB Docs (Page 5)
+    // This value is the number of T-states.
+    // To get the equivalent M-cycles, divide by 4.
     pub const clock_hz = 4_194_304;
     // TCAGB Docs (Page 27)
     pub const cycles_per_frame = 70_224;

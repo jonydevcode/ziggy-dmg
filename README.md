@@ -1,9 +1,9 @@
-# CHIP-8 Emulator in Zig
+# Ziggy-DMG - Game Boy Emulator in Zig
 
 ![No LLM Generation](https://img.shields.io/badge/LLM%20generation-none-brightgreen)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
-A Gameboy emulator written in Zig. Uses SDL3 for display, inputs, and audio.
+An independent emulator written in Zig, compatible with Game Boy games. Uses SDL3 for display, inputs, and audio. Not affiliated with or endorsed by Nintendo. Game Boy is a trademark of Nintendo.
 
 ## AI Use Disclosure
 

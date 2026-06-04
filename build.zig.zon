@@ -1,8 +1,8 @@
 .{
-    .name = .zigb_emu,
+    .name = .ziggy_dmg,
     .version = "0.1.0",
 
-    .fingerprint = 0x9dd1c6ae8781b4d7, // Changing this has security and trust implications.
+    .fingerprint = 0x3c37b45b920cb971, // Changing this has security and trust implications.
 
     .minimum_zig_version = "0.16.0",
     .dependencies = .{

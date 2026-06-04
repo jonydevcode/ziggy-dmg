@@ -7,6 +7,8 @@ const Perf = @import("Perf.zig");
 const rom = @import("rom.zig");
 const Cpu = @import("Cpu.zig");
 const input = @import("input.zig");
+const Frametime = @import("Frametime.zig");
+const Memory = @import("Memory.zig");
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
@@ -43,7 +45,8 @@ pub fn main(init: std.process.Init) !void {
     defer allocator.free(rom_bytes);
 
     // CPU
-    var cpu = Cpu.init(allocator, rng, rom_bytes);
+    var memory = Memory.init(rom_bytes);
+    var cpu = Cpu.init(allocator, rng, &memory);
     defer cpu.deinit();
 
     // PPU
@@ -62,20 +65,10 @@ pub fn main(init: std.process.Init) !void {
     );
     defer renderer.deinit();
 
-    // audio
-    // var audio = try Audio8.init();
-
-    // const cpu_ns_per_cycle = 1_000_000_000 / cpu_hz;
-    // const timer_ns_per_cycle = 1_000_000_000 / timer_hz;
-    // var cpu_accumulator: u64 = 0;
-    // var timer_accumulator: u64 = 0;
-    // var fps_accumulator: u64 = 0;
+    var frametime = Frametime.init();
     var next_frame_time: u64 = sdl.SDL_GetTicksNS();
-
     var display_changed = false;
-
     var done = false;
-
     var perf = Perf{};
 
     // Broad strategy:
@@ -130,7 +123,7 @@ pub fn main(init: std.process.Init) !void {
         perf.frames += 1;
 
         // Deadline based timer
-        next_frame_time += config.window.target_frame_time_ns;
+        next_frame_time += frametime.getNextFrameDurationNs();
         const sleep_ns = next_frame_time -| sdl.SDL_GetTicksNS();
         if (sleep_ns > 0)
             sdl.SDL_DelayNS(sleep_ns);
