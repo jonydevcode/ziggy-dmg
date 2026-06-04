@@ -1,9 +1,9 @@
 const Self = @This();
 const sdl = @import("sdl");
 
-cycles: usize = 0,
+frames: usize = 0,
 poll_ns: u64 = 0,
-cpu_step_ns: u64 = 0,
+cpu_steps_ns: u64 = 0,
 renderer_ns: u64 = 0,
 timers_ns: u64 = 0,
 audio_tick_ns: u64 = 0,

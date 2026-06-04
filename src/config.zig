@@ -12,7 +12,7 @@ pub const screen = struct {
 
 /// Window properties
 pub const window = struct {
-    pub const pixel_size = 10;
+    pub const pixel_size = 3;
     pub const width = screen.width * pixel_size;
     pub const height = screen.height * pixel_size;
     // pub const target_fps: f64 = 4_194_304 / 70_224;

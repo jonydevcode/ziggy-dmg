@@ -34,7 +34,7 @@ pub const StepResult = struct {
 pub fn step(self: *Self) !StepResult {
     _ = self;
     return StepResult{
-        .display_changed = false,
-        .cycles_used = 1,
+        .display_changed = true,
+        .cycles_used = 10,
     };
 }
