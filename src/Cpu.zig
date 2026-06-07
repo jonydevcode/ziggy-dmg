@@ -4,6 +4,7 @@ const config = @import("config.zig");
 const Registers = @import("Registers.zig");
 const Memory = @import("Memory.zig");
 const Interrupts = @import("Interrupts.zig");
+const Timers = @import("Timers.zig");
 const util = @import("util.zig");
 const readInt = std.mem.readInt;
 
@@ -13,10 +14,12 @@ rng: std.Random,
 registers: Registers,
 memory: *Memory,
 interrupts: *Interrupts,
+timers: *Timers,
 
 pub const State = enum {
     running,
     stopped,
+    halted, // HALT instruction
 };
 
 pub const StepResult = struct {
@@ -49,14 +52,44 @@ pub const StepResult = struct {
             .new_state = .stopped,
         };
     }
+
+    pub fn halt() StepResult {
+        return .{
+            .display_changed = false,
+            .t_cycles_used = 4,
+            .new_state = .halted,
+        };
+    }
 };
 
-pub fn init(allocator: std.mem.Allocator, rng: std.Random, memory: *Memory, interrupts: *Interrupts) Self {
+/// For Gameboy Doctor testing
+pub fn writeState(self: *Self, writer: *std.Io.Writer) !void {
+    try writer.print("A:{X:0>2} F:{X:0>2} B:{X:0>2} C:{X:0>2} D:{X:0>2} E:{X:0>2} H:{X:0>2} L:{X:0>2} SP:{X:0>2} PC:{X:0>4} PCMEM:{X:0>2},{X:0>2},{X:0>2},{X:0>2}\n", .{
+        self.registers.a,
+        self.registers.f,
+        self.registers.b,
+        self.registers.c,
+        self.registers.d,
+        self.registers.e,
+        self.registers.h,
+        self.registers.l,
+        self.registers.sp,
+        self.registers.pc,
+        self.memory.read(self.registers.pc),
+        self.memory.read(self.registers.pc + 1),
+        self.memory.read(self.registers.pc + 2),
+        self.memory.read(self.registers.pc + 3),
+    });
+    try writer.flush();
+}
+
+pub fn init(allocator: std.mem.Allocator, rng: std.Random, memory: *Memory, interrupts: *Interrupts, timers: *Timers) Self {
     return Self{
         .allocator = allocator,
         .rng = rng,
         .memory = memory,
         .interrupts = interrupts,
+        .timers = timers,
         .registers = .{
             .pc = 0x100,
         },
@@ -82,10 +115,12 @@ inline fn consumePC(self: *Self) u8 {
 ///     DEC SP
 ///     LD [SP], LOW(r16)   ; C, E or L
 inline fn stackPush(self: *Self, val: u16) void {
+    const hi_byte = util.fromMask(u8, val, 0xFF00);
+    const lo_byte = util.fromMask(u8, val, 0x00FF);
     self.registers.sp -%= 1;
-    self.memory.write(self.registers.sp, util.fromMask(u8, val, 0xFF00));
+    self.memory.write(self.registers.sp, hi_byte);
     self.registers.sp -%= 1;
-    self.memory.write(self.registers.sp, util.fromMask(u8, val, 0x00FF));
+    self.memory.write(self.registers.sp, lo_byte);
 }
 
 /// Pops a u16 from the stack.
@@ -97,16 +132,16 @@ inline fn stackPush(self: *Self, val: u16) void {
 ///     LD HIGH(r16), [SP]  ; B, D or H
 ///     INC SP
 inline fn stackPop(self: *Self) u16 {
-    const low_byte = self.memory.read(self.registers.sp);
-    self.registers.sp += 1;
-    const high_byte = self.memory.read(self.registers.sp);
-    self.registers.sp += 1;
-    return (@as(u16, high_byte) << 8) | low_byte;
+    const lo_byte = self.memory.read(self.registers.sp);
+    self.registers.sp +%= 1;
+    const hi_byte = self.memory.read(self.registers.sp);
+    self.registers.sp +%= 1;
+    return util.concatU16(lo_byte, hi_byte);
 }
 
 // Step
 
-pub fn step(self: *Self) !StepResult {
+pub fn step(self: *Self) StepResult {
     const opcode = self.consumePC();
 
     if (self.registers.ime_pending_enable) {
@@ -115,76 +150,162 @@ pub fn step(self: *Self) !StepResult {
         return .ok(1);
     }
 
-    if (opcode == 0xCB) {
-        // https://gbdev.io/pandocs/CPU_Instruction_Set.html#cb-prefix-instructions
-        return try self.cbPrefix();
-    }
-
-    const block: u2 = @intCast(opcode >> 6);
+    const block = util.fromMask(u2, opcode, 0b1100_0000);
     switch (block) {
         0b00 => return self.block0(opcode),
-        0b01 => {},
-        0b10 => {},
-        0b11 => {},
+        0b01 => return self.block1(opcode),
+        0b10 => return self.block2(opcode),
+        0b11 => return self.block3(opcode),
     }
 
-    return .ok(5);
+    unreachable;
 }
 
-/// https://gbdev.io/pandocs/CPU_Instruction_Set.html#cb-prefix-instructions
-pub fn cbPrefix(self: *Self) !StepResult {
-    const opcode = self.consumePC();
+pub fn block0(self: *Self, opcode: u8) StepResult {
+    switch (opcode) {
+        0b0000_0000 => return self.nop(),
+        0b0000_1000 => return self.ldN16SP(),
+        0b0000_0111 => return self.rlca(),
+        0b0000_1111 => return self.rrca(),
+        0b0001_0111 => return self.rla(),
+        0b0001_1111 => return self.rra(),
+        0b0010_0111 => return self.daa(),
+        0b0010_1111 => return self.cpl(),
+        0b0011_0111 => return self.scf(),
+        0b0011_1111 => return self.ccf(),
+        0b0001_1000 => return self.jrN16(),
+        0b0001_0000 => return self.stop(),
+        else => {
+            const low4 = util.fromMask(u4, opcode, 0b1111);
+            switch (low4) {
+                0b0001 => return self.ldR16N16(opcode),
+                0b0010 => return self.ldR16A(opcode),
+                0b1010 => return self.ldAR16(opcode),
+                0b0011 => return self.incR16(opcode),
+                0b1011 => return self.decR16(opcode),
+                0b1001 => return self.addHLR16(opcode),
+                else => {
+                    const low3 = util.fromMask(u3, opcode, 0b111);
+                    switch (low3) {
+                        0b100 => return self.incR8(opcode),
+                        0b101 => return self.decR8(opcode),
+                        0b110 => return self.ldR8N8(opcode),
+                        else => {
+                            const bit5 = util.fromMask(u1, opcode, 0b100000);
+                            if (bit5 == 1 and low3 == 0b000) {
+                                return self.jrCCN16(opcode);
+                            }
+                        },
+                    }
+                },
+            }
+        },
+    }
 
-    _ = opcode;
-
-    return StepResult.init(false, 0);
+    std.debug.panic("Invalid opcode: {X}\n", .{opcode});
 }
 
-pub fn block0(self: *Self, opcode: u8) !StepResult {
-    if (opcode == 0x0) {
-        return self.nop();
-    } else if (opcode == 0b00010000) {
-        return self.stop();
-    } else {
-        const low4: u4 = @intCast(opcode & 0b1111);
-        switch (low4) {
-            0b0001 => return self.ldR16N16(opcode),
-            0b0010 => return self.ldR16A(opcode),
-            0b1010 => return self.ldAR16(opcode),
-            0b1000 => return self.ldN16SP(),
-            0b0011 => return self.incR16(opcode),
-            0b1011 => return self.decR16(opcode),
-            0b1001 => return self.addHLR16(opcode),
-            else => {
-                const low3 = util.fromMask(u3, opcode, 0b111);
-                switch (low3) {
-                    0b100 => return self.incR8(opcode),
-                    0b101 => return self.decR8(opcode),
-                    0b110 => return self.ldR8N8(opcode),
-                    0b111 => {
-                        const mid3 = util.fromMask(u3, opcode, 0b111000);
-                        switch (mid3) {
-                            0b000 => return self.rlca(),
-                            0b001 => return self.rrca(),
-                            0b010 => return self.rla(),
-                            0b011 => return self.rra(),
-                            0b100 => return self.daa(),
-                            0b101 => return self.cpl(),
-                            0b110 => return self.scf(),
-                            0b111 => return self.ccf(),
-                        }
-                    },
-                    0b000 => {
-                        const bit5: u1 = @intCast((opcode >> 5) & 1);
-                        switch (bit5) {
-                            0b0 => return self.jrN16(),
-                            0b1 => return self.jrCCN16(opcode),
-                        }
-                    },
-                    else => std.debug.panic("Invalid opcode: {X}\n", .{opcode}),
-                }
-            },
-        }
+pub fn block1(self: *Self, opcode: u8) StepResult {
+    if (opcode == 0b01110110) {
+        return self.halt();
+    }
+    if (util.fromMask(u2, opcode, 0b11000000) == 0b01) {
+        return self.ldR8R8(opcode);
+    }
+    std.debug.panic("Invalid opcode: {X}\n", .{opcode});
+}
+
+pub fn block2(self: *Self, opcode: u8) StepResult {
+    const bits_hi5 = util.fromMask(u5, opcode, 0b11111000);
+    switch (bits_hi5) {
+        0b10000 => return self.addAR8(opcode),
+        0b10001 => return self.adcAR8(opcode),
+        0b10010 => return self.subAR8(opcode),
+        0b10011 => return self.sbcAR8(opcode),
+        0b10100 => return self.andAR8(opcode),
+        0b10101 => return self.xorAR8(opcode),
+        0b10110 => return self.orAR8(opcode),
+        0b10111 => return self.cpAR8(opcode),
+        else => {},
+    }
+    std.debug.panic("Invalid opcode: {X}\n", .{opcode});
+}
+
+pub fn block3(self: *Self, opcode: u8) StepResult {
+    switch (opcode) {
+        // table 1
+        0b11000110 => return self.addAN8(),
+        0b11001110 => return self.adcAN8(),
+        0b11010110 => return self.subAN8(),
+        0b11011110 => return self.sbcAN8(),
+        0b11100110 => return self.andAN8(),
+        0b11101110 => return self.xorAN8(),
+        0b11111110 => return self.cpAN8(),
+        // table 4
+        0xCB => {
+            // https://gbdev.io/pandocs/CPU_Instruction_Set.html#cb-prefix-instructions
+            const byte = self.consumePC();
+            const bit67 = util.fromMask(u2, byte, 0b1100_0000);
+            switch (bit67) {
+                0b00 => {
+                    const bit345 = util.fromMask(u3, byte, 0b111000);
+                    switch (bit345) {
+                        0b000 => return self.rlcR8(byte),
+                        0b001 => return self.rrcR8(byte),
+                        0b010 => return self.rlR8(byte),
+                        0b011 => return self.rrR8(byte),
+                        0b100 => return self.slaR8(byte),
+                        0b101 => return self.sraR8(byte),
+                        0b110 => return self.swapR8(byte),
+                        0b111 => return self.srlR8(byte),
+                    }
+                },
+                0b01 => return self.bitU3R8(byte),
+                0b10 => return self.resU3R8(byte),
+                0b11 => return self.setU3R8(byte),
+            }
+        },
+        // table 5
+        0b11100010 => return self.ldhCA(),
+        0b11100000 => return self.ldhN16A(),
+        0b11101010 => return self.ldN16A(),
+        0b11110010 => return self.ldhAC(),
+        0b11110000 => return self.ldhAN16(),
+        0b11111010 => return self.ldAN16(),
+        // table 6
+        0b11101000 => return self.addSPE8(),
+        0b11111000 => return self.ldHLSPE8(),
+        0b11111001 => return self.ldSPHL(),
+        // table 7
+        0b11110011 => return self.di(),
+        0b11111011 => return self.ei(),
+        else => {
+            const bit67 = util.fromMask(u2, opcode, 0b11000000);
+            const bit0123 = util.fromMask(u4, opcode, 0b00001111);
+            // table 3
+            if (bit67 == 0b11) {
+                if (bit0123 == 0b0001) return self.popR16(opcode);
+                if (bit0123 == 0b0101) return self.pushR16(opcode);
+            }
+            // table 2
+            switch (opcode) {
+                0b11001001 => return self.ret(),
+                0b11011001 => return self.reti(),
+                0b11000011 => return self.jpN16(),
+                0b11101001 => return self.jpHL(),
+                0b11001101 => return self.callN16(),
+                else => {
+                    const bit012 = util.fromMask(u3, opcode, 0b111);
+                    switch (bit012) {
+                        0b000 => return self.retCC(opcode),
+                        0b010 => return self.jpCCN16(opcode),
+                        0b100 => return self.callCCN16(opcode),
+                        0b111 => return self.rstVec(opcode),
+                        else => {},
+                    }
+                },
+            }
+        },
     }
     std.debug.panic("Invalid opcode: {X}\n", .{opcode});
 }
@@ -253,7 +374,7 @@ inline fn ldN16A(self: *Self) StepResult {
 /// byte of $FF, so it must be between $FF00 and $FFFF.
 inline fn ldhN16A(self: *Self) StepResult {
     const low_byte = self.consumePC();
-    const addr: u16 = 0xFF00 + low_byte;
+    const addr: u16 = 0xFF00 + @as(u16, low_byte);
     self.memory.write(addr, self.registers.a);
     return .ok(3);
 }
@@ -262,7 +383,7 @@ inline fn ldhN16A(self: *Self) StepResult {
 ///
 /// Copy the value in register A into the byte at address $FF00+C.
 inline fn ldhCA(self: *Self) StepResult {
-    const addr: u16 = 0xFF00 + self.registers.c;
+    const addr: u16 = 0xFF00 + @as(u16, self.registers.c);
     self.memory.write(addr, self.registers.a);
     return .ok(2);
 }
@@ -296,7 +417,7 @@ inline fn ldAN16(self: *Self) StepResult {
 /// high byte of $FF, so it must be between $FF00 and $FFFF.
 inline fn ldhAN16(self: *Self) StepResult {
     const byte = self.consumePC();
-    const addr: u16 = 0xFF00 + byte;
+    const addr: u16 = 0xFF00 + @as(u16, byte);
     self.registers.a = self.memory.read(addr);
     return .ok(4);
 }
@@ -305,7 +426,7 @@ inline fn ldhAN16(self: *Self) StepResult {
 ///
 /// Copy the byte at address $FF00+C into register A.
 inline fn ldhAC(self: *Self) StepResult {
-    const addr: u16 = 0xFF00 + self.registers.c;
+    const addr: u16 = 0xFF00 + @as(u16, self.registers.c);
     self.registers.a = self.memory.read(addr);
     return .ok(2);
 }
@@ -323,9 +444,9 @@ inline fn adcAR8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.z, @intFromBool(self.registers.a == 0));
     self.registers.setFlag(.n, 0);
     // H: Set if overflow from bit 3
-    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) == 0x0F));
+    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) + (val & 0x0F) + self.registers.getFlag(.c) > 0x0F));
     // C: Set if overflow from bit 7
-    self.registers.setFlag(.c, @intFromBool(old_val == 0xFF));
+    self.registers.setFlag(.c, @intFromBool(@as(u16, old_val) + @as(u16, val) + @as(u16, self.registers.getFlag(.c)) > 0xFF));
     return if (Registers.isR8HL(op_r8)) .ok(2) else .ok(1);
 }
 
@@ -341,9 +462,9 @@ inline fn adcAN8(self: *Self) StepResult {
     // N: 0
     self.registers.setFlag(.n, 0);
     // H: Set if overflow from bit 3
-    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) == 0x0F));
+    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) + (val & 0x0F) + self.registers.getFlag(.c) > 0x0F));
     // C: Set if overflow from bit 7
-    self.registers.setFlag(.c, @intFromBool(old_val == 0xFF));
+    self.registers.setFlag(.c, @intFromBool(@as(u16, old_val) + @as(u16, val) + @as(u16, self.registers.getFlag(.c)) > 0xFF));
     return .ok(2);
 }
 
@@ -360,9 +481,9 @@ inline fn addAR8(self: *Self, opcode: u8) StepResult {
     // N: 0
     self.registers.setFlag(.n, 0);
     // H: Set if overflow from bit 3
-    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) == 0x0F));
+    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) + (val & 0x0F) > 0x0F));
     // C: Set if overflow from bit 7
-    self.registers.setFlag(.c, @intFromBool(old_val == 0xFF));
+    self.registers.setFlag(.c, @intFromBool(@as(u16, old_val) + @as(u16, val) > 0xFF));
     return if (Registers.isR8HL(op_r8)) .ok(2) else .ok(1);
 }
 
@@ -376,9 +497,9 @@ inline fn addAN8(self: *Self) StepResult {
     self.registers.setFlag(.z, @intFromBool(self.registers.a == 0));
     self.registers.setFlag(.n, 0);
     // H: Set if overflow from bit 3
-    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) == 0x0F));
+    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) + (val & 0x0F) > 0x0F));
     // C: Set if overflow from bit 7
-    self.registers.setFlag(.c, @intFromBool(old_val == 0xFF));
+    self.registers.setFlag(.c, @intFromBool(@as(u16, old_val) + @as(u16, val) > 0xFF));
     return .ok(2);
 }
 
@@ -394,7 +515,7 @@ inline fn cpAR8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.z, @intFromBool(result == 0));
     self.registers.setFlag(.n, 1);
     // H: Set if borrow from bit 4
-    self.registers.setFlag(.h, @intFromBool((self.registers.a & 0x0F) == 0x00));
+    self.registers.setFlag(.h, @intFromBool((self.registers.a & 0x0F) < (val_r8 & 0x0F)));
     // C: Set if borrow at all
     self.registers.setFlag(.c, @intFromBool(val_r8 > self.registers.a));
     return if (Registers.isR8HL(op_r8)) .ok(2) else .ok(1);
@@ -411,7 +532,7 @@ inline fn cpAN8(self: *Self) StepResult {
     self.registers.setFlag(.z, @intFromBool(result == 0));
     self.registers.setFlag(.n, 1);
     // H: Set if borrow from bit 4
-    self.registers.setFlag(.h, @intFromBool((self.registers.a & 0x0F) == 0x00));
+    self.registers.setFlag(.h, @intFromBool((self.registers.a & 0x0F) < (val_r8 & 0x0F)));
     // C: Set if borrow at all
     self.registers.setFlag(.c, @intFromBool(val_r8 > self.registers.a));
     return .ok(2);
@@ -457,7 +578,7 @@ inline fn sbcAR8(self: *Self, opcode: u8) StepResult {
     // N: 0
     self.registers.setFlag(.n, 1);
     // H: Set if borrow from bit 4
-    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) == 0x00));
+    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) < (val & 0x0F) + self.registers.getFlag(.c)));
     // C: Set if borrow (i.e. if (r8 + carry) > A).
     self.registers.setFlag(.c, @intFromBool((val + self.registers.getFlag(.c)) > old_val));
     return if (Registers.isR8HL(op_r8)) .ok(2) else .ok(1);
@@ -472,7 +593,7 @@ inline fn sbcAN8(self: *Self) StepResult {
     // N: 0
     self.registers.setFlag(.n, 1);
     // H: Set if borrow from bit 4
-    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) == 0x00));
+    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) < (val & 0x0F) + self.registers.getFlag(.c)));
     // C: Set if borrow (i.e. if (r8 + carry) > A).
     self.registers.setFlag(.c, @intFromBool((val + self.registers.getFlag(.c)) > old_val));
     return .ok(2);
@@ -488,7 +609,7 @@ inline fn subAR8(self: *Self, opcode: u8) StepResult {
     // N: 0
     self.registers.setFlag(.n, 1);
     // H: Set if borrow from bit 4
-    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) == 0x00));
+    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) < (val & 0x0F)));
     // C: Set if borrow (i.e. if (r8 + carry) > A).
     self.registers.setFlag(.c, @intFromBool(val > old_val));
     return if (Registers.isR8HL(op_r8)) .ok(2) else .ok(1);
@@ -503,7 +624,7 @@ inline fn subAN8(self: *Self) StepResult {
     // N: 0
     self.registers.setFlag(.n, 1);
     // H: Set if borrow from bit 4
-    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) == 0x00));
+    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) < (val & 0x0F)));
     // C: Set if borrow (i.e. if r8 > A).
     self.registers.setFlag(.c, @intFromBool(val > old_val));
     return .ok(2);
@@ -578,7 +699,7 @@ inline fn orAR8(self: *Self, opcode: u8) StepResult {
     self.registers.a = result;
     self.registers.setFlag(.z, @intFromBool(result == 0));
     self.registers.setFlag(.n, 0);
-    self.registers.setFlag(.h, 1);
+    self.registers.setFlag(.h, 0);
     self.registers.setFlag(.c, 0);
     return if (Registers.isR8HL(op_r8)) .ok(2) else .ok(1);
 }
@@ -589,7 +710,7 @@ inline fn orAN8(self: *Self) StepResult {
     self.registers.a = result;
     self.registers.setFlag(.z, @intFromBool(result == 0));
     self.registers.setFlag(.n, 0);
-    self.registers.setFlag(.h, 1);
+    self.registers.setFlag(.h, 0);
     self.registers.setFlag(.c, 0);
     return .ok(2);
 }
@@ -601,7 +722,7 @@ inline fn xorAR8(self: *Self, opcode: u8) StepResult {
     self.registers.a = result;
     self.registers.setFlag(.z, @intFromBool(result == 0));
     self.registers.setFlag(.n, 0);
-    self.registers.setFlag(.h, 1);
+    self.registers.setFlag(.h, 0);
     self.registers.setFlag(.c, 0);
     return if (Registers.isR8HL(op_r8)) .ok(2) else .ok(1);
 }
@@ -612,7 +733,7 @@ inline fn xorAN8(self: *Self) StepResult {
     self.registers.a = result;
     self.registers.setFlag(.z, @intFromBool(result == 0));
     self.registers.setFlag(.n, 0);
-    self.registers.setFlag(.h, 1);
+    self.registers.setFlag(.h, 0);
     self.registers.setFlag(.c, 0);
     return .ok(2);
 }
@@ -655,10 +776,11 @@ inline fn setU3R8(self: *Self, opcode: u8) StepResult {
 ///
 /// Rotate bits in register r8 left, through the carry flag.
 inline fn rlR8(self: *Self, opcode: u8) StepResult {
-    const op: u3 = opcode & 0b111;
+    const op = util.fromMask(u3, opcode, 0b111);
     const val = self.registers.getR8(op, self.memory);
     const old_c = self.registers.getFlag(.c);
-    self.registers.setFlag(.c, (val >> 7) & 0b1);
+    const msb = util.fromMask(u1, val, 0b1000_0000);
+    self.registers.setFlag(.c, msb);
     const new_r8 = (val << 1) | old_c;
     self.registers.setR8(op, new_r8, self.memory);
     self.registers.setFlag(.z, @intFromBool(new_r8 == 0));
@@ -683,9 +805,9 @@ inline fn rla(self: *Self) StepResult {
 ///
 /// Rotate register r8 left.
 inline fn rlcR8(self: *Self, opcode: u8) StepResult {
-    const op: u3 = opcode & 0b111;
+    const op = util.fromMask(u3, opcode, 0b111);
     const val = self.registers.getR8(op, self.memory);
-    const msb: u1 = (val >> 7) & 0b1;
+    const msb = util.fromMask(u1, val, 0b1000_0000);
     self.registers.setFlag(.c, msb);
     const new_r8 = (val << 1) | msb;
     self.registers.setR8(op, new_r8, self.memory);
@@ -710,9 +832,9 @@ inline fn rlca(self: *Self) StepResult {
 ///
 ///Rotate register r8 right, through the carry flag.
 inline fn rrR8(self: *Self, opcode: u8) StepResult {
-    const op: u3 = opcode & 0b111;
+    const op = util.fromMask(u3, opcode, 0b111);
     const val = self.registers.getR8(op, self.memory);
-    const lsb: u1 = val & 0b1;
+    const lsb = util.fromMask(u1, val, 0b1);
     const old_c = self.registers.getFlag(.c);
     const new_r8 = ((val >> 1) & ~(@as(u8, 1) << 7)) | (@as(u8, old_c) << 7);
     self.registers.setR8(op, new_r8, self.memory);
@@ -724,9 +846,9 @@ inline fn rrR8(self: *Self, opcode: u8) StepResult {
 }
 
 inline fn rra(self: *Self) StepResult {
-    const lsb: u1 = @intCast((self.registers.a >> 7) & 0b1);
+    const lsb = util.fromMask(u1, self.registers.a, 0b1);
     const c = self.registers.getFlag(.c);
-    self.registers.a = ((self.registers.a >> 1) & ~(@as(u8, 1) << 7)) | (@as(u8, c) << 7);
+    self.registers.a = ((self.registers.a >> 1) & util.u8ClearMask(7)) | (@as(u8, c) << 7);
     self.registers.setFlag(.z, 0);
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 0);
@@ -738,9 +860,9 @@ inline fn rra(self: *Self) StepResult {
 ///
 /// Rotate register r8 right.
 inline fn rrcR8(self: *Self, opcode: u8) StepResult {
-    const op: u3 = opcode & 0b111;
+    const op = util.fromMask(u3, opcode, 0b111);
     const val = self.registers.getR8(op, self.memory);
-    const lsb: u1 = val & 0b1;
+    const lsb = util.fromMask(u1, val, 0b1);
     const new_r8 = ((val >> 1) & util.u8ClearMask(7)) | (@as(u8, lsb) << 7);
     self.registers.setR8(op, new_r8, self.memory);
     self.registers.setFlag(.z, @intFromBool(new_r8 == 0));
@@ -765,9 +887,9 @@ inline fn rrca(self: *Self) StepResult {
 ///
 /// Shift Left Arithmetically register r8.
 inline fn slaR8(self: *Self, opcode: u8) StepResult {
-    const op: u3 = opcode & 0b111;
+    const op = util.fromMask(u3, opcode, 0b111);
     const val = self.registers.getR8(op, self.memory);
-    const msb: u1 = (val >> 7) & 0b1;
+    const msb = util.fromMask(u1, val, 0b1000_0000);
     const new_r8 = val << 7;
     self.registers.setR8(op, new_r8, self.memory);
     self.registers.setFlag(.z, @intFromBool(new_r8 == 0));
@@ -782,10 +904,10 @@ inline fn slaR8(self: *Self, opcode: u8) StepResult {
 /// Shift Right Arithmetically the byte pointed to by HL (bit 7 of the byte
 /// pointed to by HL is unchanged).
 inline fn sraR8(self: *Self, opcode: u8) StepResult {
-    const op: u3 = opcode & 0b111;
+    const op = util.fromMask(u3, opcode, 0b111);
     const val = self.registers.getR8(op, self.memory);
-    const msb: u1 = (val >> 7) * 0b1;
-    const lsb: u1 = val & 0b1;
+    const msb = util.fromMask(u1, val, 0b1000_0000);
+    const lsb = util.fromMask(u1, val, 0b1);
     // Zig's >> operator: Moves all bits to the right, inserting zeroes at msb.
     // Hence, we have to set the msb to the old value ourselves.
     const new_r8 = (val >> 1) | (@as(u8, msb) << 7);
@@ -801,9 +923,9 @@ inline fn sraR8(self: *Self, opcode: u8) StepResult {
 ///
 /// Shift Right Logically register r8.
 inline fn srlR8(self: *Self, opcode: u8) StepResult {
-    const op: u3 = opcode & 0b111;
+    const op = util.fromMask(u3, opcode, 0b111);
     const val = self.registers.getR8(op, self.memory);
-    const lsb: u1 = val & 0b1;
+    const lsb = util.fromMask(u1, val, 0b1);
     // Zig's >> operator: Moves all bits to the right, inserting zeroes at msb.
     const new_r8 = (val >> 1);
     self.registers.setR8(op, new_r8, self.memory);
@@ -818,10 +940,10 @@ inline fn srlR8(self: *Self, opcode: u8) StepResult {
 ///
 /// Swap the upper 4 bits in register r8 and the lower 4 ones.
 inline fn swapR8(self: *Self, opcode: u8) StepResult {
-    const op: u3 = opcode & 0b111;
+    const op = util.fromMask(u3, opcode, 0b111);
     const val = self.registers.getR8(op, self.memory);
-    const upper_4: u4 = (val >> 4) & 0b1111;
-    const lower_4: u4 = val & 0b1111;
+    const upper_4 = util.fromMask(u4, val, 0b1111_0000);
+    const lower_4 = util.fromMask(u4, val, 0b0000_1111);
     const new_r8 = util.concatU8(lower_4, upper_4);
     self.registers.setR8(op, new_r8, self.memory);
     self.registers.setFlag(.z, @intFromBool(new_r8 == 0));
@@ -837,7 +959,7 @@ inline fn callN16(self: *Self) StepResult {
     const lo_byte = self.consumePC();
     const hi_byte = self.consumePC();
     const addr = util.concatU16(lo_byte, hi_byte);
-    self.stackPush(addr);
+    self.stackPush(self.registers.pc);
     self.registers.pc = addr;
     return .ok(6);
 }
@@ -849,7 +971,7 @@ inline fn callCCN16(self: *Self, opcode: u8) StepResult {
     const hi_byte = self.consumePC();
     const addr = util.concatU16(lo_byte, hi_byte);
     if (cond) {
-        self.stackPush(addr);
+        self.stackPush(self.registers.pc);
         self.registers.pc = addr;
         return .ok(6);
     } else {
@@ -867,7 +989,7 @@ inline fn jpN16(self: *Self) StepResult {
     const hi_byte = self.consumePC();
     const addr = util.concatU16(lo_byte, hi_byte);
     self.registers.pc = addr;
-    return .displayChanged(4);
+    return .ok(4);
 }
 
 inline fn jpCCN16(self: *Self, opcode: u8) StepResult {
@@ -1086,7 +1208,7 @@ inline fn ei(self: *Self) StepResult {
 
 inline fn halt(self: *Self) StepResult {
     _ = self;
-    std.debug.panic("Instruction not implemented: `{s}`\n", .{"halt"});
+    return .halt();
 }
 
 // Miscellaneous instructions //////////////////////////////////////////////////
@@ -1100,6 +1222,8 @@ inline fn nop(self: *Self) StepResult {
 /// STOP - also consume second byte
 inline fn stop(self: *Self) StepResult {
     self.registers.pc += 1;
+    self.timers.div = 0;
+    self.timers.div_enabled = false;
     return .stopped();
 }
 

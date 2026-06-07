@@ -27,7 +27,7 @@ pub inline fn af(self: *const Self) u16 {
 
 pub inline fn setAf(self: *Self, val: u16) void {
     self.a = @intCast(val >> 8);
-    self.f = @intCast(val & 0x00FF);
+    self.f = @intCast(val & 0x00F0);
 }
 
 pub inline fn bc(self: *const Self) u16 {
@@ -140,7 +140,7 @@ pub inline fn getR16Stk(self: *Self, placeholder: u2) u16 {
     }
 }
 
-pub inline fn setR16Stk(self: *Self, placeholder: u2, val: u8) void {
+pub inline fn setR16Stk(self: *Self, placeholder: u2, val: u16) void {
     switch (placeholder) {
         0 => self.setBc(val),
         1 => self.setDe(val),

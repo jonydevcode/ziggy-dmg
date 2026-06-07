@@ -28,7 +28,7 @@ pub fn isPending(self: *const Self) bool {
     return ((self.interrupt_enable & self.interrupt_flag & 0b11111) != 0);
 }
 
-pub fn request(self: *const Self, src: Component) void {
+pub fn request(self: *Self, src: Component) void {
     self.interrupt_flag |= util.u8SetMask(@intFromEnum(src));
 }
 

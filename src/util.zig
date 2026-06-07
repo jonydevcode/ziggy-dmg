@@ -8,7 +8,7 @@ pub inline fn concatU16(lo: u8, hi: u8) u16 {
 }
 
 /// Concatenates two u4 to form a u8.
-pub inline fn concatU8(lo: u4, hi: u4) u16 {
+pub inline fn concatU8(lo: u4, hi: u4) u8 {
     return (@as(u8, hi) << 4) | lo;
 }
 

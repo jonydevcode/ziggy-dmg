@@ -5,6 +5,7 @@ const Self = @This();
 const std = @import("std");
 const config = @import("config.zig");
 const Interrupts = @import("Interrupts.zig");
+const Timers = @import("Timers.zig");
 
 rom: []const u8,
 wram: [config.cpu.ram_size]u8 = @splat(0),
@@ -13,11 +14,15 @@ oam: [config.cpu.oam_size]u8 = @splat(0),
 hram: [config.cpu.hram_size]u8 = @splat(0),
 
 interrupts: *Interrupts,
+timers: *Timers,
 
-pub fn init(rom: []const u8, interrupts: *Interrupts) Self {
+io_unused: [128]u8 = @splat(0),
+
+pub fn init(rom: []const u8, interrupts: *Interrupts, timers: *Timers) Self {
     return Self{
         .rom = rom,
         .interrupts = interrupts,
+        .timers = timers,
     };
 }
 
@@ -48,16 +53,27 @@ pub fn read(self: *Self, addr: u16) u8 {
         return self.wram[addr - 0xE000];
     } else if (0xFE00 <= addr and addr <= 0xFE9F) {
         // Object attribute memory (OAM)
-        std.debug.panic("Address range not implemented yet: {X}\n", .{addr});
+        // TODO: Implement OAM properly.
+        return self.oam[addr - 0xFE00];
     } else if (0xFEA0 <= addr and addr <= 0xFEFF) {
         // Not Usable
         std.debug.panic("Not Usable address: {X}\n", .{addr});
     } else if (0xFF00 <= addr and addr <= 0xFF7F) {
         // I/O Registers
-        std.debug.panic("Address range not implemented yet: {X}\n", .{addr});
+        switch (addr) {
+            0xFF04 => return self.timers.readDiv(),
+            0xFF05 => return self.timers.readTima(),
+            0xFF06 => return self.timers.readTma(),
+            0xFF07 => return self.timers.readTac(),
+            0xFF0F => return self.interrupts.interrupt_flag,
+            // For Gameboy Doctor
+            0xFF44 => return 0x90,
+            else => return self.io_unused[addr - 0xFF00],
+        }
     } else if (0xFF80 <= addr and addr <= 0xFFFE) {
         // High RAM (HRAM)
-        std.debug.panic("Address range not implemented yet: {X}\n", .{addr});
+        // TODO: Implement HRAM properly.
+        return self.hram[addr - 0xFF80];
     } else if (0xFFFF <= addr and addr <= 0xFFFF) {
         // Interrupt Enable register (IE)
         return self.interrupts.interrupt_enable;
@@ -91,19 +107,27 @@ pub fn write(self: *Self, addr: u16, val: u8) void {
         self.wram[addr - 0xE000] = val;
     } else if (0xFE00 <= addr and addr <= 0xFE9F) {
         // Object attribute memory (OAM)
-        std.debug.panic("Address range not implemented yet: {X}\n", .{addr});
+        // TODO: Implement OAM properly.
+        self.oam[addr - 0xFE00] = val;
     } else if (0xFEA0 <= addr and addr <= 0xFEFF) {
         // Not Usable
         std.debug.panic("Not Usable address: {X}\n", .{addr});
     } else if (0xFF00 <= addr and addr <= 0xFF7F) {
         // I/O Registers
-        std.debug.panic("Address range not implemented yet: {X}\n", .{addr});
+        switch (addr) {
+            0xFF04 => self.timers.writeDiv(val),
+            0xFF05 => self.timers.writeTima(val),
+            0xFF06 => self.timers.writeTma(val),
+            0xFF07 => self.timers.writeTac(val),
+            0xFF0F => self.interrupts.interrupt_flag = val,
+            else => self.io_unused[addr - 0xFF00] = val,
+        }
     } else if (0xFF80 <= addr and addr <= 0xFFFE) {
         // High RAM (HRAM)
-        std.debug.panic("Address range not implemented yet: {X}\n", .{addr});
+        // TODO: Implement HRAM properly.
+        self.hram[addr - 0xFF80] = val;
     } else if (0xFFFF <= addr and addr <= 0xFFFF) {
         // Interrupt Enable register (IE)
         self.interrupts.interrupt_enable = val;
     }
-    std.debug.panic("Invalid memory address: {X}\n", .{addr});
 }
