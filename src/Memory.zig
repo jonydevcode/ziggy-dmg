@@ -4,6 +4,7 @@
 const Self = @This();
 const std = @import("std");
 const config = @import("config.zig");
+const Interrupts = @import("Interrupts.zig");
 
 rom: []const u8,
 wram: [config.cpu.ram_size]u8 = @splat(0),
@@ -11,9 +12,12 @@ vram: [config.cpu.vram_size]u8 = @splat(0),
 oam: [config.cpu.oam_size]u8 = @splat(0),
 hram: [config.cpu.hram_size]u8 = @splat(0),
 
-pub fn init(rom: []const u8) Self {
+interrupts: *Interrupts,
+
+pub fn init(rom: []const u8, interrupts: *Interrupts) Self {
     return Self{
         .rom = rom,
+        .interrupts = interrupts,
     };
 }
 
@@ -56,7 +60,7 @@ pub fn read(self: *Self, addr: u16) u8 {
         std.debug.panic("Address range not implemented yet: {X}\n", .{addr});
     } else if (0xFFFF <= addr and addr <= 0xFFFF) {
         // Interrupt Enable register (IE)
-        std.debug.panic("Address range not implemented yet: {X}\n", .{addr});
+        return self.interrupts.interrupt_enable;
     }
     std.debug.panic("Invalid memory address: {X}\n", .{addr});
 }
@@ -99,7 +103,7 @@ pub fn write(self: *Self, addr: u16, val: u8) void {
         std.debug.panic("Address range not implemented yet: {X}\n", .{addr});
     } else if (0xFFFF <= addr and addr <= 0xFFFF) {
         // Interrupt Enable register (IE)
-        std.debug.panic("Address range not implemented yet: {X}\n", .{addr});
+        self.interrupts.interrupt_enable = val;
     }
     std.debug.panic("Invalid memory address: {X}\n", .{addr});
 }

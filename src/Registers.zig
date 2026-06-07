@@ -1,6 +1,7 @@
 const Self = @This();
 const std = @import("std");
 const Memory = @import("Memory.zig");
+const util = @import("util.zig");
 
 a: u8 = 0,
 f: u8 = 0,
@@ -13,6 +14,12 @@ l: u8 = 0,
 
 sp: u16 = 0,
 pc: u16 = 0,
+
+// IME is a flag internal to the CPU that controls whether any interrupt handlers are called,
+// regardless of the contents of IE (stored at memory addr 0xFFFF)
+ime: bool = false,
+// The effect of ei is delayed by one instruction, hence the need for this bool
+ime_pending_enable: bool = false,
 
 pub inline fn af(self: *const Self) u16 {
     return (@as(u16, self.a) << 8) | self.f;
@@ -59,24 +66,24 @@ pub const FlagsRegister = enum {
 
 pub inline fn getFlag(self: *const Self, flag: FlagsRegister) u1 {
     switch (flag) {
-        .z => return if ((self.f & 0b1000000) != 0) 1 else 0,
-        .n => return if ((self.f & 0b0100000) != 0) 1 else 0,
-        .h => return if ((self.f & 0b0010000) != 0) 1 else 0,
-        .c => return if ((self.f & 0b0001000) != 0) 1 else 0,
+        .z => return if ((self.f & 0b10000000) != 0) 1 else 0,
+        .n => return if ((self.f & 0b01000000) != 0) 1 else 0,
+        .h => return if ((self.f & 0b00100000) != 0) 1 else 0,
+        .c => return if ((self.f & 0b00010000) != 0) 1 else 0,
     }
 }
 
 pub inline fn setFlag(self: *Self, flag: FlagsRegister, val: u1) void {
     // uses a clear-then-set approach
     switch (flag) {
-        .z => self.f = (self.f & ~(@as(u8, 1) << 7)) | (@as(u8, val) << 7),
-        .n => self.f = (self.f & ~(@as(u8, 1) << 6)) | (@as(u8, val) << 6),
-        .h => self.f = (self.f & ~(@as(u8, 1) << 5)) | (@as(u8, val) << 5),
-        .c => self.f = (self.f & ~(@as(u8, 1) << 4)) | (@as(u8, val) << 4),
+        .z => self.f = (self.f & util.u8ClearMask(7)) | (@as(u8, val) << 7),
+        .n => self.f = (self.f & util.u8ClearMask(6)) | (@as(u8, val) << 6),
+        .h => self.f = (self.f & util.u8ClearMask(5)) | (@as(u8, val) << 5),
+        .c => self.f = (self.f & util.u8ClearMask(4)) | (@as(u8, val) << 4),
     }
 }
 
-pub fn getR8(self: *Self, placeholder: u3, memory: *Memory) u8 {
+pub inline fn getR8(self: *Self, placeholder: u3, memory: *Memory) u8 {
     switch (placeholder) {
         0 => return self.b,
         1 => return self.c,
@@ -89,7 +96,11 @@ pub fn getR8(self: *Self, placeholder: u3, memory: *Memory) u8 {
     }
 }
 
-pub fn setR8(self: *Self, placeholder: u3, val: u8, memory: *Memory) void {
+pub inline fn isR8HL(op: u3) bool {
+    return op == 6;
+}
+
+pub inline fn setR8(self: *Self, placeholder: u3, val: u8, memory: *Memory) void {
     switch (placeholder) {
         0 => self.b = val,
         1 => self.c = val,
@@ -102,7 +113,7 @@ pub fn setR8(self: *Self, placeholder: u3, val: u8, memory: *Memory) void {
     }
 }
 
-pub fn getR16(self: *Self, placeholder: u2) u16 {
+pub inline fn getR16(self: *Self, placeholder: u2) u16 {
     switch (placeholder) {
         0 => return self.bc(),
         1 => return self.de(),
@@ -111,7 +122,7 @@ pub fn getR16(self: *Self, placeholder: u2) u16 {
     }
 }
 
-pub fn setR16(self: *Self, placeholder: u2, val: u16) void {
+pub inline fn setR16(self: *Self, placeholder: u2, val: u16) void {
     switch (placeholder) {
         0 => self.setBc(val),
         1 => self.setDe(val),
@@ -120,7 +131,7 @@ pub fn setR16(self: *Self, placeholder: u2, val: u16) void {
     }
 }
 
-pub fn getR16Stk(self: *Self, placeholder: u2) u8 {
+pub inline fn getR16Stk(self: *Self, placeholder: u2) u16 {
     switch (placeholder) {
         0 => return self.bc(),
         1 => return self.de(),
@@ -129,7 +140,7 @@ pub fn getR16Stk(self: *Self, placeholder: u2) u8 {
     }
 }
 
-pub fn setR16Stk(self: *Self, placeholder: u2, val: u8) void {
+pub inline fn setR16Stk(self: *Self, placeholder: u2, val: u8) void {
     switch (placeholder) {
         0 => self.setBc(val),
         1 => self.setDe(val),
@@ -138,7 +149,7 @@ pub fn setR16Stk(self: *Self, placeholder: u2, val: u8) void {
     }
 }
 
-pub fn getR16Mem(self: *Self, placeholder: u2) u16 {
+pub inline fn getR16Mem(self: *Self, placeholder: u2) u16 {
     switch (placeholder) {
         0 => return self.bc(),
         1 => return self.de(),
@@ -155,7 +166,7 @@ pub fn getR16Mem(self: *Self, placeholder: u2) u16 {
     }
 }
 
-pub fn getCond(self: *Self, placeholder: u2) bool {
+pub inline fn getCond(self: *Self, placeholder: u2) bool {
     switch (placeholder) {
         0 => return self.getFlag(.z) == 0,
         1 => return self.getFlag(.z) == 1,

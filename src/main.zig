@@ -9,6 +9,7 @@ const Cpu = @import("Cpu.zig");
 const input = @import("input.zig");
 const Frametime = @import("Frametime.zig");
 const Memory = @import("Memory.zig");
+const Interrupts = @import("Interrupts.zig");
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
@@ -45,8 +46,9 @@ pub fn main(init: std.process.Init) !void {
     defer allocator.free(rom_bytes);
 
     // CPU
-    var memory = Memory.init(rom_bytes);
-    var cpu = Cpu.init(allocator, rng, &memory);
+    var interrupts = Interrupts.init();
+    var memory = Memory.init(rom_bytes, &interrupts);
+    var cpu = Cpu.init(allocator, rng, &memory, &interrupts);
     defer cpu.deinit();
 
     // PPU
@@ -106,7 +108,7 @@ pub fn main(init: std.process.Init) !void {
         while (cycles <= config.cpu.cycles_per_frame) {
             const step_result = try cpu.step();
             display_changed = step_result.display_changed;
-            cycles += step_result.cycles_used;
+            cycles += step_result.t_cycles_used;
         }
         perf.cpu_steps_ns += perf.lap();
 
