@@ -637,7 +637,7 @@ inline fn addHLR16(self: *Self, opcode: u8) StepResult {
     const placeholder: u2 = @intCast((opcode >> 4) & 0b11);
     const old_val = self.registers.hl();
     const r_val = self.registers.getR16(placeholder);
-    self.registers.setHl(old_val + r_val);
+    self.registers.setHl(old_val +% r_val);
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, @intFromBool(((old_val & 0x0FFF) + (r_val & 0x0FFF)) > 0x0FFF));
     self.registers.setFlag(.c, @intFromBool(@as(u32, old_val) + @as(u32, r_val) > 0xFFFF));

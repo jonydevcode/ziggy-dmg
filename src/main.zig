@@ -58,7 +58,7 @@ pub fn main(init: std.process.Init) !void {
     // Gameboy Doctor log file
     var buf: [4096]u8 = undefined;
     var fixedwriter = std.Io.Writer.fixed(&buf);
-    try fixedwriter.print("{s}.log.txt", .{std.fs.path.basename(args[1])});
+    try fixedwriter.print("{s}.log", .{std.fs.path.basename(args[1])});
     const log_path = fixedwriter.buffered();
     var log_file = try std.Io.Dir.cwd().createFile(init.io, log_path, .{ .truncate = true });
     defer log_file.close(init.io);
