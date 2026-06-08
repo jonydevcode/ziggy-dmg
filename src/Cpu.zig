@@ -64,7 +64,7 @@ pub const StepResult = struct {
 
 /// For Gameboy Doctor testing
 pub fn writeState(self: *Self, writer: *std.Io.Writer) !void {
-    try writer.print("A:{X:0>2} F:{X:0>2} B:{X:0>2} C:{X:0>2} D:{X:0>2} E:{X:0>2} H:{X:0>2} L:{X:0>2} SP:{X:0>2} PC:{X:0>4} PCMEM:{X:0>2},{X:0>2},{X:0>2},{X:0>2}\n", .{
+    try writer.print("A:{X:0>2} F:{X:0>2} B:{X:0>2} C:{X:0>2} D:{X:0>2} E:{X:0>2} H:{X:0>2} L:{X:0>2} SP:{X:0>4} PC:{X:0>4} PCMEM:{X:0>2},{X:0>2},{X:0>2},{X:0>2}\n", .{
         self.registers.a,
         self.registers.f,
         self.registers.b,
@@ -142,13 +142,13 @@ inline fn stackPop(self: *Self) u16 {
 // Step
 
 pub fn step(self: *Self) StepResult {
-    const opcode = self.consumePC();
-
     if (self.registers.ime_pending_enable) {
         self.registers.ime = true;
         self.registers.ime_pending_enable = false;
-        return .ok(1);
+        // return .ok(1);
     }
+
+    const opcode = self.consumePC();
 
     const block = util.fromMask(u2, opcode, 0b1100_0000);
     switch (block) {
@@ -267,22 +267,22 @@ pub fn block3(self: *Self, opcode: u8) StepResult {
             }
         },
         // table 5
-        0b11100010 => return self.ldhCA(),
-        0b11100000 => return self.ldhN16A(),
-        0b11101010 => return self.ldN16A(),
-        0b11110010 => return self.ldhAC(),
-        0b11110000 => return self.ldhAN16(),
-        0b11111010 => return self.ldAN16(),
+        0b1110_0010 => return self.ldhCA(),
+        0b1110_0000 => return self.ldhN16A(),
+        0b1110_1010 => return self.ldN16A(),
+        0b1111_0010 => return self.ldhAC(),
+        0b1111_0000 => return self.ldhAN16(),
+        0b1111_1010 => return self.ldAN16(),
         // table 6
-        0b11101000 => return self.addSPE8(),
-        0b11111000 => return self.ldHLSPE8(),
-        0b11111001 => return self.ldSPHL(),
+        0b1110_1000 => return self.addSPE8(),
+        0b1111_1000 => return self.ldHLSPE8(),
+        0b1111_1001 => return self.ldSPHL(),
         // table 7
-        0b11110011 => return self.di(),
-        0b11111011 => return self.ei(),
+        0b1111_0011 => return self.di(),
+        0b1111_1011 => return self.ei(),
         else => {
-            const bit67 = util.fromMask(u2, opcode, 0b11000000);
-            const bit0123 = util.fromMask(u4, opcode, 0b00001111);
+            const bit67 = util.fromMask(u2, opcode, 0b1100_0000);
+            const bit0123 = util.fromMask(u4, opcode, 0b0000_1111);
             // table 3
             if (bit67 == 0b11) {
                 if (bit0123 == 0b0001) return self.popR16(opcode);
@@ -290,11 +290,11 @@ pub fn block3(self: *Self, opcode: u8) StepResult {
             }
             // table 2
             switch (opcode) {
-                0b11001001 => return self.ret(),
-                0b11011001 => return self.reti(),
-                0b11000011 => return self.jpN16(),
-                0b11101001 => return self.jpHL(),
-                0b11001101 => return self.callN16(),
+                0b1100_1001 => return self.ret(),
+                0b1101_1001 => return self.reti(),
+                0b1100_0011 => return self.jpN16(),
+                0b1110_1001 => return self.jpHL(),
+                0b1100_1101 => return self.callN16(),
                 else => {
                     const bit012 = util.fromMask(u3, opcode, 0b111);
                     switch (bit012) {
@@ -441,7 +441,7 @@ inline fn adcAR8(self: *Self, opcode: u8) StepResult {
     const op_r8 = util.fromMask(u3, opcode, 0b111);
     const val = self.registers.getR8(op_r8, self.memory);
     const old_val = self.registers.a;
-    self.registers.a +%= val + self.registers.getFlag(.c);
+    self.registers.a +%= val +% self.registers.getFlag(.c);
     self.registers.setFlag(.z, @intFromBool(self.registers.a == 0));
     self.registers.setFlag(.n, 0);
     // H: Set if overflow from bit 3
@@ -824,7 +824,7 @@ inline fn rlca(self: *Self) StepResult {
     self.registers.a = (self.registers.a << 1) | msb;
     self.registers.setFlag(.z, 0);
     self.registers.setFlag(.n, 0);
-    self.registers.setFlag(.n, 0);
+    self.registers.setFlag(.h, 0);
     self.registers.setFlag(.c, msb);
     return .ok(1);
 }
@@ -837,7 +837,7 @@ inline fn rrR8(self: *Self, opcode: u8) StepResult {
     const val = self.registers.getR8(op, self.memory);
     const lsb = util.fromMask(u1, val, 0b1);
     const old_c = self.registers.getFlag(.c);
-    const new_r8 = ((val >> 1) & util.u8ClearMask(7)) | (@as(u8, old_c) << 7);
+    const new_r8 = (val >> 1) | (@as(u8, old_c) << 7);
     self.registers.setR8(op, new_r8, self.memory);
     self.registers.setFlag(.z, @intFromBool(new_r8 == 0));
     self.registers.setFlag(.n, 0);
@@ -875,8 +875,8 @@ inline fn rrcR8(self: *Self, opcode: u8) StepResult {
 
 /// RRCA
 inline fn rrca(self: *Self) StepResult {
-    const lsb: u1 = @intCast((self.registers.a >> 7) & 0b1);
-    self.registers.a = ((self.registers.a >> 1) & util.u8ClearMask(7)) | (@as(u8, lsb) << 7);
+    const lsb: u1 = util.fromMask(u1, self.registers.a, 0b1);
+    self.registers.a = (self.registers.a >> 1) | (@as(u8, lsb) << 7);
     self.registers.setFlag(.z, 0);
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 0);
@@ -891,7 +891,7 @@ inline fn slaR8(self: *Self, opcode: u8) StepResult {
     const op = util.fromMask(u3, opcode, 0b111);
     const val = self.registers.getR8(op, self.memory);
     const msb = util.fromMask(u1, val, 0b1000_0000);
-    const new_r8 = val << 7;
+    const new_r8 = val << 1;
     self.registers.setR8(op, new_r8, self.memory);
     self.registers.setFlag(.z, @intFromBool(new_r8 == 0));
     self.registers.setFlag(.n, 0);
@@ -945,7 +945,7 @@ inline fn swapR8(self: *Self, opcode: u8) StepResult {
     const val = self.registers.getR8(op, self.memory);
     const upper_4 = util.fromMask(u4, val, 0b1111_0000);
     const lower_4 = util.fromMask(u4, val, 0b0000_1111);
-    const new_r8 = util.concatU8(lower_4, upper_4);
+    const new_r8 = util.concatU8(upper_4, lower_4);
     self.registers.setR8(op, new_r8, self.memory);
     self.registers.setFlag(.z, @intFromBool(new_r8 == 0));
     self.registers.setFlag(.n, 0);
@@ -1067,7 +1067,7 @@ inline fn reti(self: *Self) StepResult {
 /// values of vec.
 inline fn rstVec(self: *Self, opcode: u8) StepResult {
     const op_vec = util.fromMask(u3, opcode, 0b111000);
-    const addr = @as(u16, @intCast(op_vec)) * 3;
+    const addr = @as(u16, @intCast(op_vec)) * 8;
     self.stackPush(self.registers.pc);
     self.registers.pc = addr;
     return .ok(4);
@@ -1115,9 +1115,9 @@ inline fn addSPE8(self: *Self) StepResult {
     self.registers.setFlag(.z, 0);
     self.registers.setFlag(.n, 0);
     // H: Set if overflow from bit 3
-    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) == 0x0F));
+    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) + (raw & 0x0F) > 0x0F));
     // C: Set if overflow from bit 7
-    self.registers.setFlag(.c, @intFromBool(old_val == 0xFF));
+    self.registers.setFlag(.c, @intFromBool((old_val & 0xFF) + (raw & 0xFF) > 0xFF));
     return .ok(4);
 }
 
@@ -1152,16 +1152,16 @@ inline fn ldN16SP(self: *Self) StepResult {
 inline fn ldHLSPE8(self: *Self) StepResult {
     const raw = self.consumePC();
     const offset: i8 = @bitCast(raw);
-    const old_val = self.registers.hl();
+    const old_val = self.registers.sp;
     // i8 -> i16 -> u16: Do this cast to leverage Zig's integer wrapping
     const new_val = old_val +% @as(u16, @bitCast(@as(i16, offset)));
     self.registers.setHl(new_val);
     self.registers.setFlag(.z, 0);
     self.registers.setFlag(.n, 0);
     // H: Set if overflow from bit 3
-    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) == 0x0F));
+    self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) + (raw & 0x0F) > 0x0F));
     // C: Set if overflow from bit 7
-    self.registers.setFlag(.c, @intFromBool(old_val == 0xFF));
+    self.registers.setFlag(.c, @intFromBool((old_val & 0xFF) + (raw & 0xFF) > 0xFF));
     return .ok(4);
 }
 
