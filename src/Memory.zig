@@ -115,6 +115,7 @@ pub fn write(self: *Self, addr: u16, val: u8) void {
     } else if (0xFF00 <= addr and addr <= 0xFF7F) {
         // I/O Registers
         switch (addr) {
+            0xFF01 => std.debug.print("{c}", .{val}), // for blargg's test roms
             0xFF04 => self.timers.writeDiv(val),
             0xFF05 => self.timers.writeTima(val),
             0xFF06 => self.timers.writeTma(val),

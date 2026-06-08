@@ -234,13 +234,14 @@ pub fn block2(self: *Self, opcode: u8) StepResult {
 pub fn block3(self: *Self, opcode: u8) StepResult {
     switch (opcode) {
         // table 1
-        0b11000110 => return self.addAN8(),
-        0b11001110 => return self.adcAN8(),
-        0b11010110 => return self.subAN8(),
-        0b11011110 => return self.sbcAN8(),
-        0b11100110 => return self.andAN8(),
-        0b11101110 => return self.xorAN8(),
-        0b11111110 => return self.cpAN8(),
+        0b1100_0110 => return self.addAN8(),
+        0b1100_1110 => return self.adcAN8(),
+        0b1101_0110 => return self.subAN8(),
+        0b1101_1110 => return self.sbcAN8(),
+        0b1110_0110 => return self.andAN8(),
+        0b1110_1110 => return self.xorAN8(),
+        0b1111_0110 => return self.orAN8(),
+        0b1111_1110 => return self.cpAN8(),
         // table 4
         0xCB => {
             // https://gbdev.io/pandocs/CPU_Instruction_Set.html#cb-prefix-instructions
@@ -456,7 +457,7 @@ inline fn adcAR8(self: *Self, opcode: u8) StepResult {
 inline fn adcAN8(self: *Self) StepResult {
     const val = self.consumePC();
     const old_val = self.registers.a;
-    self.registers.a +%= val + self.registers.getFlag(.c);
+    self.registers.a +%= val +% self.registers.getFlag(.c);
     // Z: Set if result is 0
     self.registers.setFlag(.z, @intFromBool(self.registers.a == 0));
     // N: 0
@@ -572,7 +573,7 @@ inline fn sbcAR8(self: *Self, opcode: u8) StepResult {
     const op_r8 = util.fromMask(u3, opcode, 0b111);
     const val = self.registers.getR8(op_r8, self.memory);
     const old_val = self.registers.a;
-    self.registers.a -%= val + self.registers.getFlag(.c);
+    self.registers.a -%= val +% self.registers.getFlag(.c);
     // Z: Set if result is 0
     self.registers.setFlag(.z, @intFromBool(self.registers.a == 0));
     // N: 0
@@ -580,14 +581,14 @@ inline fn sbcAR8(self: *Self, opcode: u8) StepResult {
     // H: Set if borrow from bit 4
     self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) < (val & 0x0F) + self.registers.getFlag(.c)));
     // C: Set if borrow (i.e. if (r8 + carry) > A).
-    self.registers.setFlag(.c, @intFromBool((val + self.registers.getFlag(.c)) > old_val));
+    self.registers.setFlag(.c, @intFromBool((@as(u16, val) + self.registers.getFlag(.c)) > old_val));
     return if (Registers.isR8HL(op_r8)) .ok(2) else .ok(1);
 }
 
 inline fn sbcAN8(self: *Self) StepResult {
     const val = self.consumePC();
     const old_val = self.registers.a;
-    self.registers.a -%= val + self.registers.getFlag(.c);
+    self.registers.a -%= val +% self.registers.getFlag(.c);
     // Z: Set if result is 0
     self.registers.setFlag(.z, @intFromBool(self.registers.a == 0));
     // N: 0
@@ -595,7 +596,7 @@ inline fn sbcAN8(self: *Self) StepResult {
     // H: Set if borrow from bit 4
     self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) < (val & 0x0F) + self.registers.getFlag(.c)));
     // C: Set if borrow (i.e. if (r8 + carry) > A).
-    self.registers.setFlag(.c, @intFromBool((val + self.registers.getFlag(.c)) > old_val));
+    self.registers.setFlag(.c, @intFromBool((@as(u16, val) + self.registers.getFlag(.c)) > old_val));
     return .ok(2);
 }
 
@@ -836,7 +837,7 @@ inline fn rrR8(self: *Self, opcode: u8) StepResult {
     const val = self.registers.getR8(op, self.memory);
     const lsb = util.fromMask(u1, val, 0b1);
     const old_c = self.registers.getFlag(.c);
-    const new_r8 = ((val >> 1) & ~(@as(u8, 1) << 7)) | (@as(u8, old_c) << 7);
+    const new_r8 = ((val >> 1) & util.u8ClearMask(7)) | (@as(u8, old_c) << 7);
     self.registers.setR8(op, new_r8, self.memory);
     self.registers.setFlag(.z, @intFromBool(new_r8 == 0));
     self.registers.setFlag(.n, 0);

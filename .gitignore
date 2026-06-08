@@ -10,5 +10,5 @@ zig-pkg/
 *.tmp
 .DS_Store
 *.gb
-*.log.txt
+*.txt
 *.log
