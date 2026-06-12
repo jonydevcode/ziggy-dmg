@@ -13,3 +13,4 @@ zig-pkg/
 *.txt
 *.log
 temp.zig
+tmp/

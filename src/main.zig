@@ -137,17 +137,19 @@ pub fn main(init: std.process.Init) !void {
         while (t_cycles <= config.cpu.cycles_per_frame) {
             const step_result = cpu.step();
             switch (step_result.new_state) {
-                .running => {},
-                .halted => done = true,
+                .running => {
+                    try cpu.writeState(writer);
+                },
+                .halted => {},
                 .stopped => done = true,
+                .interrupted => {},
             }
 
             display_changed = step_result.display_changed;
             t_cycles += step_result.t_cycles_used;
 
-            timers.tick(t_cycles, cpu.interrupts);
-
-            try cpu.writeState(writer);
+            timers.tick(t_cycles);
+            timers.processTimaState(&interrupts);
         }
         // Save the balance for the next round
         t_cycles %= config.cpu.cycles_per_frame;

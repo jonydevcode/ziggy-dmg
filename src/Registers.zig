@@ -15,12 +15,6 @@ l: u8 = 0,
 sp: u16 = 0,
 pc: u16 = 0,
 
-// IME is a flag internal to the CPU that controls whether any interrupt handlers are called,
-// regardless of the contents of IE (stored at memory addr 0xFFFF)
-ime: bool = false,
-// The effect of ei is delayed by one instruction, hence the need for this bool
-ime_pending_enable: bool = false,
-
 pub inline fn af(self: *const Self) u16 {
     return (@as(u16, self.a) << 8) | self.f;
 }

@@ -33,6 +33,7 @@ pub const cpu = struct {
     pub const vram_size = 8192;
     pub const oam_size = 160;
     pub const hram_size = 127;
+    pub const extram_size = 8192;
 };
 
 pub const ppu = struct {};

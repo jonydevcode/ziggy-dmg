@@ -33,6 +33,13 @@ div_every_t: usize = 256,
 tima_accumulator: usize = 0,
 tima_enabled: bool = false,
 tima_every_t: usize = 0,
+tima_interrupt_state: TimaInterruptState = .normal,
+
+pub const TimaInterruptState = enum {
+    normal,
+    armed,
+    pending_interrupt,
+};
 
 pub fn init() Self {
     return Self{};
@@ -53,13 +60,27 @@ pub inline fn writeDiv(self: *Self, val: u8) void {
     self.div = 0;
 }
 
-pub inline fn incTima(self: *Self, interrupts: *Interrupts) void {
+pub inline fn incTima(self: *Self) void {
     if (self.tima == 0xFF) {
         // next inc will overflow
-        self.tima = self.tma;
-        interrupts.request(.timer);
+        // self.tima = self.tma; // wrong, see https://gbdev.io/pandocs/Timer_Obscure_Behaviour.html#relation-between-timer-and-divider-register
+        self.tima = 0x00;
+        // interrupts.request(.timer);
+        self.tima_interrupt_state = .armed;
     } else {
         self.tima += 1;
+    }
+}
+
+pub fn processTimaState(self: *Self, interrupts: *Interrupts) void {
+    switch (self.tima_interrupt_state) {
+        .normal => {},
+        .armed => self.tima_interrupt_state = .pending_interrupt,
+        .pending_interrupt => {
+            self.tima_interrupt_state = .normal;
+            self.tima = self.tma;
+            interrupts.request(.timer);
+        },
     }
 }
 
@@ -80,6 +101,8 @@ pub inline fn writeTma(self: *Self, val: u8) void {
 }
 
 pub inline fn writeTac(self: *Self, val: u8) void {
+    self.tac = val;
+
     const enable_bit = util.fromMask(u1, val, 0b100);
     self.tima_enabled = if (enable_bit == 1) true else false;
 
@@ -96,13 +119,12 @@ pub inline fn readTac(self: *Self) u8 {
     return self.tac;
 }
 
-pub fn tick(self: *Self, cpu_t_cycles: usize, interrupts: *Interrupts) void {
+pub fn tick(self: *Self, cpu_t_cycles: usize) void {
     const elapsed_t_cycles = (cpu_t_cycles + cycles_limit - self.last_cpu_t_cycles) % cycles_limit;
     self.last_cpu_t_cycles = cpu_t_cycles;
 
     // add the elapsed cycles to the accumulators
     self.div_accumulator += elapsed_t_cycles;
-    self.tima_accumulator += elapsed_t_cycles;
 
     // div - inc every 256 T-cycles
     while (self.div_accumulator >= self.div_every_t) {
@@ -112,9 +134,10 @@ pub fn tick(self: *Self, cpu_t_cycles: usize, interrupts: *Interrupts) void {
 
     // tima - only if enabled
     if (self.tima_enabled) {
+        self.tima_accumulator += elapsed_t_cycles;
         // tima - inc every X T-cycles, depending on TAC
         while (self.tima_accumulator >= self.tima_every_t) {
-            self.incTima(interrupts);
+            self.incTima();
             self.tima_accumulator -= self.tima_every_t;
         }
     }

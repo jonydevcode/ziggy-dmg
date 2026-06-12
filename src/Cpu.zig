@@ -15,15 +15,17 @@ registers: Registers,
 memory: *Memory,
 interrupts: *Interrupts,
 timers: *Timers,
+state: State,
 
 pub const State = enum {
     running,
     stopped,
     halted, // HALT instruction
+    interrupted,
 };
 
 pub const StepResult = struct {
-    display_changed: bool,
+    display_changed: bool = false,
     // gbz80 reference - Cycles: 5 means 5 Game Boy machine cycles or M-cycles,
     // not 5 raw 4.194304 MHz clock ticks or T-cycles
     t_cycles_used: usize,
@@ -39,26 +41,21 @@ pub const StepResult = struct {
 
     pub fn ok(m_cycles_used: usize) StepResult {
         return .{
-            .display_changed = false,
             .t_cycles_used = m_cycles_used * 4,
             .new_state = .running,
         };
     }
 
-    pub fn stopped() StepResult {
-        return .{
-            .display_changed = false,
-            .t_cycles_used = 0,
-            .new_state = .stopped,
-        };
+    pub fn interrupted(m_cycles_used: usize) StepResult {
+        return .{ .t_cycles_used = m_cycles_used * 4, .new_state = .interrupted };
     }
 
-    pub fn halt() StepResult {
-        return .{
-            .display_changed = false,
-            .t_cycles_used = 4,
-            .new_state = .halted,
-        };
+    pub fn stopped() StepResult {
+        return .{ .t_cycles_used = 0, .new_state = .stopped };
+    }
+
+    pub fn halted() StepResult {
+        return .{ .t_cycles_used = 4, .new_state = .halted };
     }
 };
 
@@ -93,6 +90,7 @@ pub fn init(allocator: std.mem.Allocator, rng: std.Random, memory: *Memory, inte
         .registers = .{
             .pc = 0x100,
         },
+        .state = .running,
     };
 }
 
@@ -142,10 +140,31 @@ inline fn stackPop(self: *Self) u16 {
 // Step
 
 pub fn step(self: *Self) StepResult {
-    if (self.registers.ime_pending_enable) {
-        self.registers.ime = true;
-        self.registers.ime_pending_enable = false;
-        // return .ok(1);
+    switch (self.interrupts.ime_pending_enable) {
+        .delay => self.interrupts.ime_pending_enable = .armed,
+        .armed => {
+            self.interrupts.ime = true;
+            self.interrupts.ime_pending_enable = .nothing;
+        },
+        .nothing => {},
+    }
+
+    if (self.state == .halted) {
+        // Check if there's a PENDING interrupt and if yes, even if IME is false, continue processing
+        if ((self.interrupts.interrupt_enable & self.interrupts.interrupt_flag & 0b11111) != 0) {
+            self.state = .running;
+            return .ok(0);
+        } else {
+            return .halted();
+        }
+    }
+
+    if (self.interrupts.highestPriority()) |component| {
+        self.interrupts.clear(component);
+        self.interrupts.ime = false;
+        self.stackPush(self.registers.pc);
+        self.registers.pc = Interrupts.getHandlerAddr(component);
+        return .interrupted(5);
     }
 
     const opcode = self.consumePC();
@@ -1198,18 +1217,18 @@ inline fn pushR16(self: *Self, opcode: u8) StepResult {
 // Interrupt-related instructions //////////////////////////////////////////////
 
 inline fn di(self: *Self) StepResult {
-    self.registers.ime = false;
+    self.interrupts.ime = false;
     return .ok(1);
 }
 
 inline fn ei(self: *Self) StepResult {
-    self.registers.ime_pending_enable = true;
+    self.interrupts.ime_pending_enable = .delay;
     return .ok(1);
 }
 
 inline fn halt(self: *Self) StepResult {
-    _ = self;
-    return .halt();
+    self.state = .halted;
+    return .halted();
 }
 
 // Miscellaneous instructions //////////////////////////////////////////////////
