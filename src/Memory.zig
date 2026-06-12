@@ -7,8 +7,10 @@ const config = @import("config.zig");
 const Interrupts = @import("Interrupts.zig");
 const Timers = @import("Timers.zig");
 const util = @import("util.zig");
+const Cartridge = @import("Cartridge.zig");
 
-rom: []const u8,
+// rom: []const u8,
+cartridge: *Cartridge,
 wram: [config.cpu.ram_size]u8 = @splat(0),
 vram: [config.cpu.vram_size]u8 = @splat(0),
 oam: [config.cpu.oam_size]u8 = @splat(0),
@@ -20,9 +22,9 @@ timers: *Timers,
 
 io_unused: [128]u8 = @splat(0),
 
-pub fn init(rom: []const u8, interrupts: *Interrupts, timers: *Timers) Self {
+pub fn init(cartridge: *Cartridge, interrupts: *Interrupts, timers: *Timers) Self {
     return Self{
-        .rom = rom,
+        .cartridge = cartridge,
         .interrupts = interrupts,
         .timers = timers,
     };
@@ -32,11 +34,10 @@ pub fn init(rom: []const u8, interrupts: *Interrupts, timers: *Timers) Self {
 pub fn read(self: *Self, addr: u16) u8 {
     if (0x0000 <= addr and addr <= 0x3FFF) {
         // 16 KiB ROM bank 00
-        return self.rom[addr];
+        return self.cartridge.read(addr);
     } else if (0x4000 <= addr and addr <= 0x7FFF) {
         // 16 KiB ROM Bank 01–NN
-        // TODO: Implement MBC logic
-        return self.rom[addr];
+        return self.cartridge.read(addr);
     } else if (0x8000 <= addr and addr <= 0x9FFF) {
         // 8 KiB Video RAM (VRAM)
         return self.vram[addr - 0x8000];
@@ -70,6 +71,7 @@ pub fn read(self: *Self, addr: u16) u8 {
             0xFF0F => return self.interrupts.interrupt_flag,
             // For Gameboy Doctor
             0xFF44 => return 0x90,
+            0xFF4D => return 0xFF, // KEY1 register is unavailable on DMG
             else => return self.io_unused[addr - 0xFF00],
         }
     } else if (0xFF80 <= addr and addr <= 0xFFFE) {
@@ -83,61 +85,10 @@ pub fn read(self: *Self, addr: u16) u8 {
     std.debug.panic("Invalid memory address: {X}\n", .{addr});
 }
 
-const MBCType = enum {
-    none,
-    mbc1,
-    mbc2,
-    mbc3,
-    mbc4,
-    mbc5,
-    mbc6,
-    mbc7,
-
-    pub fn write(self: MBCType, addr: u16, val: u8, memory: *Self) void {
-        switch (self) {
-            .none => {
-                std.debug.panic("Attempt to write to cartridge ROM address with no MBC: {X}\n", .{addr});
-            },
-            .mbc1 => memory.writeMBC1(addr, val),
-            else => {},
-        }
-    }
-};
-
-pub fn getMBCType(self: *Self) MBCType {
-    switch (self.rom[0x147]) {
-        0x0 => return .none,
-        0x1, 0x2, 0x3 => return .mbc1,
-        0x5, 0x6 => return .mbc2,
-        0x0F, 0x10, 0x11, 0x12, 0x13 => return .mbc3,
-        0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E => return .mbc4,
-        0x20 => return .mbc6,
-        0x22 => return .mbc7,
-        else => return .none,
-    }
-}
-
-pub fn writeMBC1(self: *Self, addr: u16, val: u8) void {
-    _ = self;
-    _ = val;
-    if (0x0000 <= addr and addr <= 0x1FFF) {
-        // RAM Enable (Write Only)
-        // const lower4 = util.fromMask(u4, val, 0b1111);
-        // if (lower4 == 0xA)
-    } else if (0x2000 <= addr and addr <= 0x3FFF) {
-        // ROM Bank Number (Write Only)
-    } else if (0x4000 <= addr and addr <= 0x5FFF) {
-        // RAM Bank Number — or — Upper Bits of ROM Bank Number (Write Only)
-    } else if (0x6000 <= addr and addr <= 0x7FFF) {
-        // Banking Mode Select (Write Only)
-    }
-}
-
 /// Does a write to the 16-bit address bus
 pub fn write(self: *Self, addr: u16, val: u8) void {
     if (0x0000 <= addr and addr <= 0x7FFF) {
-        const mbc_type = self.getMBCType();
-        mbc_type.write(addr, val, self);
+        self.cartridge.write(addr, val);
     } else if (0x8000 <= addr and addr <= 0x9FFF) {
         // 8 KiB Video RAM (VRAM)
         self.vram[addr - 0x8000] = val;

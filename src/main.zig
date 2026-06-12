@@ -4,7 +4,7 @@ const Renderer = @import("Renderer.zig");
 const RGBA = @import("SdlGpu.zig").RGBA;
 const config = @import("config.zig");
 const Perf = @import("Perf.zig");
-const rom = @import("rom.zig");
+const Cartridge = @import("Cartridge.zig");
 const Cpu = @import("Cpu.zig");
 const input = @import("input.zig");
 const Frametime = @import("Frametime.zig");
@@ -13,6 +13,7 @@ const Interrupts = @import("Interrupts.zig");
 const Timers = @import("Timers.zig");
 
 const display_enabled = false;
+const gameboy_doctor_enabled = false;
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
@@ -38,7 +39,7 @@ pub fn main(init: std.process.Init) !void {
 
     // get the rom bytes
     const rom_path = args[1];
-    const rom_bytes = rom.getBytes(init.io, allocator, rom_path) catch |err| switch (err) {
+    var cartridge = Cartridge.init(init.io, allocator, rom_path) catch |err| switch (err) {
         error.FileNotFound => {
             try stderr.interface.print("File not found: {s}\n", .{std.fs.path.basename(args[1])});
             try stderr.interface.flush();
@@ -46,12 +47,12 @@ pub fn main(init: std.process.Init) !void {
         },
         else => return err,
     };
-    defer allocator.free(rom_bytes);
+    defer cartridge.deinit();
 
     // CPU
     var timers = Timers.init();
     var interrupts = Interrupts.init();
-    var memory = Memory.init(rom_bytes, &interrupts, &timers);
+    var memory = Memory.init(&cartridge, &interrupts, &timers);
     var cpu = Cpu.init(allocator, rng, &memory, &interrupts, &timers);
     defer cpu.deinit();
 
@@ -77,7 +78,7 @@ pub fn main(init: std.process.Init) !void {
     cpu.registers.l = 0x4D;
     cpu.registers.sp = 0xFFFE;
     cpu.registers.pc = 0x0100;
-    try cpu.writeState(writer);
+    if (gameboy_doctor_enabled) try cpu.writeState(writer);
 
     // PPU
     var fake_screen = [_]u2{3} ** (config.screen.height * config.screen.width);
@@ -122,7 +123,6 @@ pub fn main(init: std.process.Init) !void {
                         .quit => done = true,
                         .game => |action| {
                             _ = action;
-                            // chip8.setKey(action.key, action.state);
                         },
                         .none => {},
                     }
@@ -138,7 +138,7 @@ pub fn main(init: std.process.Init) !void {
             const step_result = cpu.step();
             switch (step_result.new_state) {
                 .running => {
-                    try cpu.writeState(writer);
+                    if (gameboy_doctor_enabled) try cpu.writeState(writer);
                 },
                 .halted => {},
                 .stopped => done = true,

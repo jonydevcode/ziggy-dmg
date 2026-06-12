@@ -1241,7 +1241,7 @@ inline fn nop(self: *Self) StepResult {
 
 /// STOP - also consume second byte
 inline fn stop(self: *Self) StepResult {
-    self.registers.pc += 1;
+    _ = self.consumePC();
     self.timers.div = 0;
     self.timers.div_enabled = false;
     return .stopped();
