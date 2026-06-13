@@ -169,6 +169,21 @@ pub fn step(self: *Self) StepResult {
 
     const opcode = self.consumePC();
 
+    if (opcode == 0x40) {
+        std.debug.print("ld B, B executed\n", .{});
+        const b = self.registers.b == 3;
+        const c = self.registers.c == 5;
+        const d = self.registers.d == 8;
+        const e = self.registers.e == 13;
+        const h = self.registers.h == 21;
+        const l = self.registers.l == 34;
+        if (b and c and d and e and h and l) {
+            std.debug.print("mooneye test PASS\n", .{});
+        } else {
+            std.debug.print("mooneye test FAIL\n", .{});
+        }
+    }
+
     const block = util.fromMask(u2, opcode, 0b1100_0000);
     switch (block) {
         0b00 => return self.block0(opcode),

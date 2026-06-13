@@ -1,4 +1,5 @@
 const Self = @This();
+const std = @import("std");
 const Interrupts = @import("Interrupts.zig");
 const config = @import("config.zig");
 const util = @import("util.zig");
@@ -63,11 +64,11 @@ pub inline fn writeDiv(self: *Self, val: u8) void {
 pub inline fn incTima(self: *Self) void {
     if (self.tima == 0xFF) {
         // next inc will overflow
-        // self.tima = self.tma; // wrong, see https://gbdev.io/pandocs/Timer_Obscure_Behaviour.html#relation-between-timer-and-divider-register
+        // wrong, see https://gbdev.io/pandocs/Timer_Obscure_Behaviour.html#relation-between-timer-and-divider-register
         self.tima = 0x00;
-        // interrupts.request(.timer);
         self.tima_interrupt_state = .armed;
     } else {
+        // std.debug.print("Incrementing tima {d} + 1\n", .{self.tima});
         self.tima += 1;
     }
 }
@@ -80,6 +81,7 @@ pub fn processTimaState(self: *Self, interrupts: *Interrupts) void {
             self.tima_interrupt_state = .normal;
             self.tima = self.tma;
             interrupts.request(.timer);
+            // std.debug.print("tima reset to tma value ({})", .{self.tma});
         },
     }
 }
@@ -89,6 +91,7 @@ pub inline fn readTima(self: *Self) u8 {
 }
 
 pub inline fn writeTima(self: *Self, val: u8) void {
+    // std.debug.print("Writing directly to tima value {X}\n", .{val});
     self.tima = val;
 }
 
@@ -113,6 +116,8 @@ pub inline fn writeTac(self: *Self, val: u8) void {
         0b10 => self.tima_every_t = 16 * 4,
         0b11 => self.tima_every_t = 64 * 4,
     }
+
+    std.debug.print("tac written: {X}, enable_bit = {}, clock_bits = {b}\n", .{ val, enable_bit, clock_bits });
 }
 
 pub inline fn readTac(self: *Self) u8 {

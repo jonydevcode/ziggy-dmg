@@ -171,9 +171,9 @@ pub fn main(init: std.process.Init) !void {
 
         // Deadline based timer
         next_frame_time += frametime.getNextFrameDurationNs();
-        const sleep_ns = next_frame_time -| sdl.SDL_GetTicksNS();
-        if (sleep_ns > 0)
-            sdl.SDL_DelayNS(sleep_ns);
+        // const sleep_ns = next_frame_time -| sdl.SDL_GetTicksNS();
+        // if (sleep_ns > 0)
+        //     sdl.SDL_DelayNS(sleep_ns);
     }
 
     // print performance metrics
