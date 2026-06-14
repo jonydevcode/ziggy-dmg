@@ -101,10 +101,11 @@ pub fn deinit(self: *Self) void {
 inline fn consumePC(self: *Self) u8 {
     const val = self.memory.read(self.registers.pc);
     self.registers.pc += 1;
+    self.timers.tickOneMCycle();
     return val;
 }
 
-/// Pushes a u16 onto the stack.
+/// Pushes a u16 onto the stack. Consumes 2 M-cycles from the 2x memory writes.
 ///
 /// A separate stack helper is needed because CALL and PUSH both push things
 /// onto the stack:
@@ -169,20 +170,20 @@ pub fn step(self: *Self) StepResult {
 
     const opcode = self.consumePC();
 
-    if (opcode == 0x40) {
-        std.debug.print("ld B, B executed\n", .{});
-        const b = self.registers.b == 3;
-        const c = self.registers.c == 5;
-        const d = self.registers.d == 8;
-        const e = self.registers.e == 13;
-        const h = self.registers.h == 21;
-        const l = self.registers.l == 34;
-        if (b and c and d and e and h and l) {
-            std.debug.print("mooneye test PASS\n", .{});
-        } else {
-            std.debug.print("mooneye test FAIL\n", .{});
-        }
-    }
+    // if (opcode == 0x40) {
+    //     // std.debug.print("ld B, B executed\n", .{});
+    //     const b = self.registers.b == 3;
+    //     const c = self.registers.c == 5;
+    //     const d = self.registers.d == 8;
+    //     const e = self.registers.e == 13;
+    //     const h = self.registers.h == 21;
+    //     const l = self.registers.l == 34;
+    //     if (b and c and d and e and h and l) {
+    //         std.debug.print("mooneye test PASS\n", .{});
+    //     } else {
+    //         std.debug.print("mooneye test FAIL\n", .{});
+    //     }
+    // }
 
     const block = util.fromMask(u2, opcode, 0b1100_0000);
     switch (block) {
@@ -454,6 +455,7 @@ inline fn ldhAN16(self: *Self) StepResult {
     const byte = self.consumePC();
     const addr: u16 = 0xFF00 + @as(u16, byte);
     self.registers.a = self.memory.read(addr);
+    self.timers.tickOneMCycle();
     return .ok(4);
 }
 
@@ -608,9 +610,7 @@ inline fn sbcAR8(self: *Self, opcode: u8) StepResult {
     const val = self.registers.getR8(op_r8, self.memory);
     const old_val = self.registers.a;
     self.registers.a -%= val +% self.registers.getFlag(.c);
-    // Z: Set if result is 0
     self.registers.setFlag(.z, @intFromBool(self.registers.a == 0));
-    // N: 0
     self.registers.setFlag(.n, 1);
     // H: Set if borrow from bit 4
     self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) < (val & 0x0F) + self.registers.getFlag(.c)));
@@ -623,9 +623,7 @@ inline fn sbcAN8(self: *Self) StepResult {
     const val = self.consumePC();
     const old_val = self.registers.a;
     self.registers.a -%= val +% self.registers.getFlag(.c);
-    // Z: Set if result is 0
     self.registers.setFlag(.z, @intFromBool(self.registers.a == 0));
-    // N: 0
     self.registers.setFlag(.n, 1);
     // H: Set if borrow from bit 4
     self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) < (val & 0x0F) + self.registers.getFlag(.c)));
@@ -639,9 +637,7 @@ inline fn subAR8(self: *Self, opcode: u8) StepResult {
     const val = self.registers.getR8(op_r8, self.memory);
     const old_val = self.registers.a;
     self.registers.a -%= val;
-    // Z: Set if result is 0
     self.registers.setFlag(.z, @intFromBool(self.registers.a == 0));
-    // N: 0
     self.registers.setFlag(.n, 1);
     // H: Set if borrow from bit 4
     self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) < (val & 0x0F)));
@@ -654,9 +650,7 @@ inline fn subAN8(self: *Self) StepResult {
     const val = self.consumePC();
     const old_val = self.registers.a;
     self.registers.a -%= val;
-    // Z: Set if result is 0
     self.registers.setFlag(.z, @intFromBool(self.registers.a == 0));
-    // N: 0
     self.registers.setFlag(.n, 1);
     // H: Set if borrow from bit 4
     self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) < (val & 0x0F)));
@@ -676,18 +670,21 @@ inline fn addHLR16(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, @intFromBool(((old_val & 0x0FFF) + (r_val & 0x0FFF)) > 0x0FFF));
     self.registers.setFlag(.c, @intFromBool(@as(u32, old_val) + @as(u32, r_val) > 0xFFFF));
+    self.timers.tickOneMCycle();
     return .ok(2);
 }
 
 inline fn decR16(self: *Self, opcode: u8) StepResult {
     const placeholder: u2 = @intCast((opcode >> 4) & 0b11);
     self.registers.setR16(placeholder, self.registers.getR16(placeholder) -% 1);
+    self.timers.tickOneMCycle();
     return .ok(2);
 }
 
 inline fn incR16(self: *Self, opcode: u8) StepResult {
     const placeholder: u2 = @intCast((opcode >> 4) & 0b11);
     self.registers.setR16(placeholder, self.registers.getR16(placeholder) +% 1);
+    self.timers.tickOneMCycle();
     return .ok(2);
 }
 
@@ -775,6 +772,7 @@ inline fn xorAN8(self: *Self) StepResult {
 
 // Bit flag instructions ///////////////////////////////////////////////////////
 
+/// Test bit u3 in register r8, set the zero flag if bit not set.
 inline fn bitU3R8(self: *Self, opcode: u8) StepResult {
     const bit_index = util.fromMask(u3, opcode, 0b111000);
     const op_r8 = util.fromMask(u3, opcode, 0b111);
@@ -783,6 +781,7 @@ inline fn bitU3R8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.z, @intFromBool(bit == 0));
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 1);
+    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op_r8)) .ok(3) else .ok(2);
 }
 
@@ -792,6 +791,7 @@ inline fn resU3R8(self: *Self, opcode: u8) StepResult {
     const r8_val = self.registers.getR8(op_r8, self.memory);
     const new_val: u8 = @intCast(r8_val & ~(@as(u8, 1) << bit_index));
     self.registers.setR8(op_r8, new_val, self.memory);
+    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op_r8)) .ok(4) else .ok(2);
 }
 
@@ -802,6 +802,7 @@ inline fn setU3R8(self: *Self, opcode: u8) StepResult {
     // reset to 0 first, then set the bit to 1
     const new_val: u8 = @intCast((r8_val & ~(@as(u8, 1) << bit_index)) | (@as(u8, 1) << bit_index));
     self.registers.setR8(op_r8, new_val, self.memory);
+    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op_r8)) .ok(4) else .ok(2);
 }
 
@@ -821,6 +822,7 @@ inline fn rlR8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.z, @intFromBool(new_r8 == 0));
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 0);
+    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op)) .ok(4) else .ok(2);
 }
 
@@ -849,6 +851,7 @@ inline fn rlcR8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.z, @intFromBool(new_r8 == 0));
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 0);
+    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op)) .ok(4) else .ok(2);
 }
 
@@ -877,6 +880,7 @@ inline fn rrR8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 0);
     self.registers.setFlag(.c, lsb);
+    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op)) .ok(4) else .ok(2);
 }
 
@@ -904,6 +908,7 @@ inline fn rrcR8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 0);
     self.registers.setFlag(.c, lsb);
+    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op)) .ok(4) else .ok(2);
 }
 
@@ -931,6 +936,7 @@ inline fn slaR8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 0);
     self.registers.setFlag(.c, msb);
+    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op)) .ok(4) else .ok(2);
 }
 
@@ -951,6 +957,7 @@ inline fn sraR8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 0);
     self.registers.setFlag(.c, lsb);
+    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op)) .ok(4) else .ok(2);
 }
 
@@ -968,6 +975,7 @@ inline fn srlR8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 0);
     self.registers.setFlag(.c, lsb);
+    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op)) .ok(4) else .ok(2);
 }
 
@@ -985,6 +993,7 @@ inline fn swapR8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 0);
     self.registers.setFlag(.c, 0);
+    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op)) .ok(4) else .ok(2);
 }
 
@@ -994,6 +1003,7 @@ inline fn callN16(self: *Self) StepResult {
     const lo_byte = self.consumePC();
     const hi_byte = self.consumePC();
     const addr = util.concatU16(lo_byte, hi_byte);
+    self.timers.tickOneMCycle();
     self.stackPush(self.registers.pc);
     self.registers.pc = addr;
     return .ok(6);
@@ -1006,6 +1016,7 @@ inline fn callCCN16(self: *Self, opcode: u8) StepResult {
     const hi_byte = self.consumePC();
     const addr = util.concatU16(lo_byte, hi_byte);
     if (cond) {
+        self.timers.tickOneMCycle();
         self.stackPush(self.registers.pc);
         self.registers.pc = addr;
         return .ok(6);
@@ -1024,6 +1035,7 @@ inline fn jpN16(self: *Self) StepResult {
     const hi_byte = self.consumePC();
     const addr = util.concatU16(lo_byte, hi_byte);
     self.registers.pc = addr;
+    self.timers.tickOneMCycle();
     return .ok(4);
 }
 
@@ -1034,6 +1046,7 @@ inline fn jpCCN16(self: *Self, opcode: u8) StepResult {
     const hi_byte = self.consumePC();
     const addr = util.concatU16(lo_byte, hi_byte);
     if (cond) {
+        self.timers.tickOneMCycle();
         self.registers.pc = addr;
         return .ok(4);
     } else {
@@ -1047,6 +1060,7 @@ inline fn jrN16(self: *Self) StepResult {
     const offset: i8 = @bitCast(raw);
     // Do this cast to leverage Zig's integer wrapping
     self.registers.pc +%= @as(u16, @bitCast(@as(i16, offset)));
+    self.timers.tickOneMCycle();
     return .ok(3);
 }
 
@@ -1058,6 +1072,7 @@ inline fn jrCCN16(self: *Self, opcode: u8) StepResult {
     if (self.registers.getCond(placeholder)) {
         // Do this cast to leverage Zig's integer wrapping
         self.registers.pc +%= @as(u16, @bitCast(@as(i16, offset)));
+        self.timers.tickOneMCycle();
         return .ok(3);
     } else {
         return .ok(2);
@@ -1066,9 +1081,11 @@ inline fn jrCCN16(self: *Self, opcode: u8) StepResult {
 
 /// RET cc - Return from subroutine if condition cc is met.
 inline fn retCC(self: *Self, opcode: u8) StepResult {
+    self.timers.tickOneMCycle();
     const op_cond = util.fromMask(u2, opcode, 0b11000);
     const cond = self.registers.getCond(op_cond);
     if (cond) {
+        self.timers.tickOneMCycle();
         self.registers.pc = self.stackPop();
         return .ok(5);
     } else {
@@ -1082,6 +1099,7 @@ inline fn retCC(self: *Self, opcode: u8) StepResult {
 /// See POP r16 for an explanation of how POP works.
 inline fn ret(self: *Self) StepResult {
     self.registers.pc = self.stackPop();
+    self.timers.tickOneMCycle();
     return .ok(4);
 }
 
@@ -1102,6 +1120,7 @@ inline fn reti(self: *Self) StepResult {
 inline fn rstVec(self: *Self, opcode: u8) StepResult {
     const op_vec = util.fromMask(u3, opcode, 0b111000);
     const addr = @as(u16, @intCast(op_vec)) * 8;
+    self.timers.tickOneMCycle();
     self.stackPush(self.registers.pc);
     self.registers.pc = addr;
     return .ok(4);
@@ -1135,6 +1154,7 @@ inline fn addHLSP(self: *Self) StepResult {
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, @intFromBool(((old_val & 0x0FFF) + (sp & 0x0FFF)) > 0x0FFF));
     self.registers.setFlag(.c, @intFromBool(@as(u32, old_val) + @as(u32, sp) > 0xFFFF));
+    self.timers.tickOneMCycle();
     return .ok(2);
 }
 
@@ -1152,16 +1172,20 @@ inline fn addSPE8(self: *Self) StepResult {
     self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) + (raw & 0x0F) > 0x0F));
     // C: Set if overflow from bit 7
     self.registers.setFlag(.c, @intFromBool((old_val & 0xFF) + (raw & 0xFF) > 0xFF));
+    self.timers.tickOneMCycle();
+    self.timers.tickOneMCycle();
     return .ok(4);
 }
 
 inline fn decSP(self: *Self) StepResult {
     self.registers.sp -%= 1;
+    self.timers.tickOneMCycle();
     return .ok(2);
 }
 
 inline fn incSP(self: *Self) StepResult {
     self.registers.sp +%= 1;
+    self.timers.tickOneMCycle();
     return .ok(2);
 }
 
@@ -1196,11 +1220,14 @@ inline fn ldHLSPE8(self: *Self) StepResult {
     self.registers.setFlag(.h, @intFromBool((old_val & 0x0F) + (raw & 0x0F) > 0x0F));
     // C: Set if overflow from bit 7
     self.registers.setFlag(.c, @intFromBool((old_val & 0xFF) + (raw & 0xFF) > 0xFF));
+    self.timers.tickOneMCycle();
+    self.timers.tickOneMCycle();
     return .ok(4);
 }
 
 inline fn ldSPHL(self: *Self) StepResult {
     self.registers.sp = self.registers.hl();
+    self.timers.tickOneMCycle();
     return .ok(2);
 }
 
@@ -1219,6 +1246,7 @@ inline fn popR16(self: *Self, opcode: u8) StepResult {
 
 inline fn pushAF(self: *Self) StepResult {
     self.stackPush(self.registers.af());
+    self.timers.tickOneMCycle();
     return .ok(4);
 }
 
@@ -1226,6 +1254,7 @@ inline fn pushR16(self: *Self, opcode: u8) StepResult {
     const r16_op = util.fromMask(u2, opcode, 0b110000);
     const r16 = self.registers.getR16Stk(r16_op);
     self.stackPush(r16);
+    self.timers.tickOneMCycle();
     return .ok(4);
 }
 

@@ -13,7 +13,7 @@ const Interrupts = @import("Interrupts.zig");
 const Timers = @import("Timers.zig");
 
 const display_enabled = false;
-const gameboy_doctor_enabled = false;
+const gameboy_doctor_enabled = true;
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
@@ -50,8 +50,8 @@ pub fn main(init: std.process.Init) !void {
     defer cartridge.deinit();
 
     // CPU
-    var timers = Timers.init();
     var interrupts = Interrupts.init();
+    var timers = Timers.init(&interrupts);
     var memory = Memory.init(&cartridge, &interrupts, &timers);
     var cpu = Cpu.init(allocator, rng, &memory, &interrupts, &timers);
     defer cpu.deinit();
@@ -78,6 +78,7 @@ pub fn main(init: std.process.Init) !void {
     cpu.registers.l = 0x4D;
     cpu.registers.sp = 0xFFFE;
     cpu.registers.pc = 0x0100;
+    // std.debug.print("gameboy_doctor_enabled = {}\n", .{gameboy_doctor_enabled});
     if (gameboy_doctor_enabled) try cpu.writeState(writer);
 
     // PPU
@@ -148,8 +149,7 @@ pub fn main(init: std.process.Init) !void {
             display_changed = step_result.display_changed;
             t_cycles += step_result.t_cycles_used;
 
-            timers.tick(t_cycles);
-            timers.processTimaState(&interrupts);
+            // timers.tick(step_result.t_cycles_used, &interrupts);
         }
         // Save the balance for the next round
         t_cycles %= config.cpu.cycles_per_frame;

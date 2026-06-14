@@ -32,6 +32,7 @@ pub fn init(cartridge: *Cartridge, interrupts: *Interrupts, timers: *Timers) Sel
 
 /// Does a read off the 16-bit address bus
 pub fn read(self: *Self, addr: u16) u8 {
+    self.timers.tickOneMCycle();
     if (0x0000 <= addr and addr <= 0x3FFF) {
         // 16 KiB ROM bank 00
         return self.cartridge.read(addr);
@@ -87,6 +88,7 @@ pub fn read(self: *Self, addr: u16) u8 {
 
 /// Does a write to the 16-bit address bus
 pub fn write(self: *Self, addr: u16, val: u8) void {
+    self.timers.tickOneMCycle();
     if (0x0000 <= addr and addr <= 0x7FFF) {
         self.cartridge.write(addr, val);
     } else if (0x8000 <= addr and addr <= 0x9FFF) {
