@@ -110,7 +110,7 @@ pub fn main(init: std.process.Init) !void {
     // 1. Step the CPU 70,224 times
     // 2. Render one frame
     // 3. Target config.window.target_fps (~59.73 fps) with a deadline delay
-    while (!done) {
+    game_loop: while (!done) {
         perf.start();
 
         // Poll events
@@ -144,6 +144,10 @@ pub fn main(init: std.process.Init) !void {
                 .halted => {},
                 .stopped => done = true,
                 .interrupted => {},
+                .terminated => {
+                    done = true;
+                    break :game_loop;
+                },
             }
 
             display_changed = step_result.display_changed;
@@ -177,11 +181,11 @@ pub fn main(init: std.process.Init) !void {
     }
 
     // print performance metrics
-    std.debug.print("Per frame performance metrics in ns\n", .{});
-    std.debug.print("Frames:     {d}\n", .{perf.frames});
-    std.debug.print("PollEvent:  {d}\n", .{perf.poll_ns / perf.frames});
-    std.debug.print("CPU steps:  {d}\n", .{perf.cpu_steps_ns / perf.frames});
-    std.debug.print("Renderer:   {d}\n", .{perf.renderer_ns / perf.frames});
+    // std.debug.print("Per frame performance metrics in ns\n", .{});
+    // std.debug.print("Frames:     {d}\n", .{perf.frames});
+    // std.debug.print("PollEvent:  {d}\n", .{perf.poll_ns / perf.frames});
+    // std.debug.print("CPU steps:  {d}\n", .{perf.cpu_steps_ns / perf.frames});
+    // std.debug.print("Renderer:   {d}\n", .{perf.renderer_ns / perf.frames});
     // std.debug.print("Timers:     {d}\n", .{perf.timers_ns / perf.cycles});
     // std.debug.print("Audio tick: {d}\n", .{perf.audio_tick_ns / perf.cycles});
 }

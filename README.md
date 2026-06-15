@@ -11,6 +11,8 @@ The current contents of this repository were written **without** LLM/AI code gen
 
 ## Devlog
 
+- **2026-06-15**: Passed all tests in `mooneye-test-suite/acceptance/timer`.
+- **2026-06-12**: Passed the full blargg's `cpu_instrs` test rom.
 - **2026-06-08**: Fixed a bunch of CPU instruction bugs. Blargg's `cpu_instrs` individual test roms 03 to 11 now pass.
 - **2026-06-07**: Implemented all CPU instructions. Implemented placeholder arrays for IO addresses. Interrupt registers can be set but no handling. Blargg's `cpu_instrs` individual test rom 01 passes!
 - **2026-06-04**: Started dev. Copied the structure from CHIP-8 emulator, but switched to the game boy's 160 x 144 screen with a 4 colour palette.

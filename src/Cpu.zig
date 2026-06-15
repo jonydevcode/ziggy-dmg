@@ -22,6 +22,7 @@ pub const State = enum {
     stopped,
     halted, // HALT instruction
     interrupted,
+    terminated,
 };
 
 pub const StepResult = struct {
@@ -56,6 +57,10 @@ pub const StepResult = struct {
 
     pub fn halted() StepResult {
         return .{ .t_cycles_used = 4, .new_state = .halted };
+    }
+
+    pub fn terminated() StepResult {
+        return .{ .t_cycles_used = 4, .new_state = .terminated };
     }
 };
 
@@ -161,10 +166,12 @@ pub fn step(self: *Self) StepResult {
         }
     }
 
+    // This design avoids incrementing PC then decrementing if there's a pending interrupt.
+    // See https://gist.github.com/SonoSooS/c0055300670d678b5ae8433e20bea595#isr-and-nmi
+    self.timers.tickOneMCycle();
     if (self.interrupts.highestPriority()) |component| {
         self.interrupts.clear(component);
         self.interrupts.ime = false;
-        self.timers.tickOneMCycle();
         self.timers.tickOneMCycle();
         self.stackPush(self.registers.pc);
         self.registers.pc = Interrupts.getHandlerAddr(component);
@@ -172,22 +179,26 @@ pub fn step(self: *Self) StepResult {
         return .interrupted(5);
     }
 
-    const opcode = self.consumePC();
+    // If there was no pending interrupt, then 1 M-cycle is paid. Hence,
+    // this opcode fetch should not consume another M-cycle.
+    const opcode = self.memory.peek(self.registers.pc);
+    self.registers.pc += 1;
 
-    // if (opcode == 0x40) {
-    //     // std.debug.print("ld B, B executed\n", .{});
-    //     const b = self.registers.b == 3;
-    //     const c = self.registers.c == 5;
-    //     const d = self.registers.d == 8;
-    //     const e = self.registers.e == 13;
-    //     const h = self.registers.h == 21;
-    //     const l = self.registers.l == 34;
-    //     if (b and c and d and e and h and l) {
-    //         std.debug.print("mooneye test PASS\n", .{});
-    //     } else {
-    //         std.debug.print("mooneye test FAIL\n", .{});
-    //     }
-    // }
+    if (opcode == 0x40) {
+        // std.debug.print("ld B, B executed\n", .{});
+        const b = self.registers.b == 3;
+        const c = self.registers.c == 5;
+        const d = self.registers.d == 8;
+        const e = self.registers.e == 13;
+        const h = self.registers.h == 21;
+        const l = self.registers.l == 34;
+        if (b and c and d and e and h and l) {
+            std.debug.print("mooneye test PASS\n", .{});
+        } else {
+            std.debug.print("mooneye test FAIL\n", .{});
+        }
+        return .terminated();
+    }
 
     const block = util.fromMask(u2, opcode, 0b1100_0000);
     switch (block) {
