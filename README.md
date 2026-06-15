@@ -7,7 +7,7 @@ An independent emulator written in Zig, compatible with Game Boy games. Uses SDL
 
 ## AI Use Disclosure
 
-The current contents of this repository were written without LLM/AI code generation. All AI usage in any form by contributors must be disclosed.
+The current contents of this repository were written **without** LLM/AI code generation. All AI usage in any form by contributors must be disclosed.
 
 ## Devlog
 
@@ -40,6 +40,7 @@ zig build run -- rom_file.gb
 - [castholm/SDL](https://github.com/castholm/SDL)
 - [gbdev.io](https://gbdev.io/)
 - [Blargg's test roms](https://github.com/retrio/gb-test-roms)
+- [Mooneye test suite](https://github.com/Gekkio/mooneye-test-suite)
 
 ## License
 
