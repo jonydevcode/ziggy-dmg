@@ -79,12 +79,12 @@ pub inline fn writeTima(self: *Self, val: u8) void {
     self.tima = val;
 }
 
-pub inline fn writeTma(self: *Self, val: u8) void {
-    self.tma = val;
-}
-
 pub inline fn readTma(self: *Self) u8 {
     return self.tma;
+}
+
+pub inline fn writeTma(self: *Self, val: u8) void {
+    self.tma = val;
 }
 
 pub inline fn writeTac(self: *Self, val: u8) void {
@@ -100,6 +100,7 @@ pub inline fn writeTac(self: *Self, val: u8) void {
         0b10 => self.tima_every_mcycles = 16,
         0b11 => self.tima_every_mcycles = 64,
     }
+    // std.debug.print("writeTac({X}): tima_enabled={}, tima_mcycles={}\n", .{ val, enable_bit, self.tima_every_mcycles });
 }
 
 pub inline fn readTac(self: *Self) u8 {
@@ -131,7 +132,6 @@ pub inline fn readTac(self: *Self) u8 {
 
 pub fn tickOneMCycle(self: *Self) void {
     self.div_accumulator_mcycles += 1;
-
     while (self.div_accumulator_mcycles >= self.div_every_mcycle) {
         self.incDiv();
         self.div_accumulator_mcycles -= self.div_every_mcycle;

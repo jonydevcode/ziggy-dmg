@@ -13,7 +13,7 @@ const Interrupts = @import("Interrupts.zig");
 const Timers = @import("Timers.zig");
 
 const display_enabled = false;
-const gameboy_doctor_enabled = true;
+const gameboy_doctor_enabled = false;
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;

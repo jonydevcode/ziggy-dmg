@@ -30,9 +30,8 @@ pub fn init(cartridge: *Cartridge, interrupts: *Interrupts, timers: *Timers) Sel
     };
 }
 
-/// Does a read off the 16-bit address bus
-pub fn read(self: *Self, addr: u16) u8 {
-    self.timers.tickOneMCycle();
+/// Reads off the 16-bit address bus. Does NOT ticks one M cycle.
+pub fn peek(self: *Self, addr: u16) u8 {
     if (0x0000 <= addr and addr <= 0x3FFF) {
         // 16 KiB ROM bank 00
         return self.cartridge.read(addr);
@@ -84,6 +83,12 @@ pub fn read(self: *Self, addr: u16) u8 {
         return self.interrupts.interrupt_enable;
     }
     std.debug.panic("Invalid memory address: {X}\n", .{addr});
+}
+
+/// Reads off the 16-bit address bus. Ticks one M cycle.
+pub fn read(self: *Self, addr: u16) u8 {
+    self.timers.tickOneMCycle();
+    return self.peek(addr);
 }
 
 /// Does a write to the 16-bit address bus

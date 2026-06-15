@@ -72,10 +72,10 @@ pub fn writeState(self: *Self, writer: *std.Io.Writer) !void {
         self.registers.l,
         self.registers.sp,
         self.registers.pc,
-        self.memory.read(self.registers.pc),
-        self.memory.read(self.registers.pc + 1),
-        self.memory.read(self.registers.pc + 2),
-        self.memory.read(self.registers.pc + 3),
+        self.memory.peek(self.registers.pc),
+        self.memory.peek(self.registers.pc + 1),
+        self.memory.peek(self.registers.pc + 2),
+        self.memory.peek(self.registers.pc + 3),
     });
     try writer.flush();
 }
@@ -101,7 +101,7 @@ pub fn deinit(self: *Self) void {
 inline fn consumePC(self: *Self) u8 {
     const val = self.memory.read(self.registers.pc);
     self.registers.pc += 1;
-    self.timers.tickOneMCycle();
+    // self.timers.tickOneMCycle();
     return val;
 }
 
@@ -156,6 +156,7 @@ pub fn step(self: *Self) StepResult {
             self.state = .running;
             return .ok(0);
         } else {
+            self.timers.tickOneMCycle();
             return .halted();
         }
     }
@@ -163,8 +164,11 @@ pub fn step(self: *Self) StepResult {
     if (self.interrupts.highestPriority()) |component| {
         self.interrupts.clear(component);
         self.interrupts.ime = false;
+        self.timers.tickOneMCycle();
+        self.timers.tickOneMCycle();
         self.stackPush(self.registers.pc);
         self.registers.pc = Interrupts.getHandlerAddr(component);
+        self.timers.tickOneMCycle();
         return .interrupted(5);
     }
 
@@ -455,8 +459,7 @@ inline fn ldhAN16(self: *Self) StepResult {
     const byte = self.consumePC();
     const addr: u16 = 0xFF00 + @as(u16, byte);
     self.registers.a = self.memory.read(addr);
-    self.timers.tickOneMCycle();
-    return .ok(4);
+    return .ok(3);
 }
 
 /// LDH A,[C] | ldh a, [c]
@@ -781,7 +784,6 @@ inline fn bitU3R8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.z, @intFromBool(bit == 0));
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 1);
-    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op_r8)) .ok(3) else .ok(2);
 }
 
@@ -791,7 +793,6 @@ inline fn resU3R8(self: *Self, opcode: u8) StepResult {
     const r8_val = self.registers.getR8(op_r8, self.memory);
     const new_val: u8 = @intCast(r8_val & ~(@as(u8, 1) << bit_index));
     self.registers.setR8(op_r8, new_val, self.memory);
-    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op_r8)) .ok(4) else .ok(2);
 }
 
@@ -802,7 +803,6 @@ inline fn setU3R8(self: *Self, opcode: u8) StepResult {
     // reset to 0 first, then set the bit to 1
     const new_val: u8 = @intCast((r8_val & ~(@as(u8, 1) << bit_index)) | (@as(u8, 1) << bit_index));
     self.registers.setR8(op_r8, new_val, self.memory);
-    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op_r8)) .ok(4) else .ok(2);
 }
 
@@ -822,7 +822,6 @@ inline fn rlR8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.z, @intFromBool(new_r8 == 0));
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 0);
-    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op)) .ok(4) else .ok(2);
 }
 
@@ -851,7 +850,6 @@ inline fn rlcR8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.z, @intFromBool(new_r8 == 0));
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 0);
-    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op)) .ok(4) else .ok(2);
 }
 
@@ -880,7 +878,6 @@ inline fn rrR8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 0);
     self.registers.setFlag(.c, lsb);
-    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op)) .ok(4) else .ok(2);
 }
 
@@ -908,7 +905,6 @@ inline fn rrcR8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 0);
     self.registers.setFlag(.c, lsb);
-    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op)) .ok(4) else .ok(2);
 }
 
@@ -936,7 +932,6 @@ inline fn slaR8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 0);
     self.registers.setFlag(.c, msb);
-    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op)) .ok(4) else .ok(2);
 }
 
@@ -957,7 +952,6 @@ inline fn sraR8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 0);
     self.registers.setFlag(.c, lsb);
-    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op)) .ok(4) else .ok(2);
 }
 
@@ -975,7 +969,6 @@ inline fn srlR8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 0);
     self.registers.setFlag(.c, lsb);
-    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op)) .ok(4) else .ok(2);
 }
 
@@ -993,7 +986,6 @@ inline fn swapR8(self: *Self, opcode: u8) StepResult {
     self.registers.setFlag(.n, 0);
     self.registers.setFlag(.h, 0);
     self.registers.setFlag(.c, 0);
-    self.timers.tickOneMCycle();
     return if (Registers.isR8HL(op)) .ok(4) else .ok(2);
 }
 
@@ -1221,8 +1213,7 @@ inline fn ldHLSPE8(self: *Self) StepResult {
     // C: Set if overflow from bit 7
     self.registers.setFlag(.c, @intFromBool((old_val & 0xFF) + (raw & 0xFF) > 0xFF));
     self.timers.tickOneMCycle();
-    self.timers.tickOneMCycle();
-    return .ok(4);
+    return .ok(3);
 }
 
 inline fn ldSPHL(self: *Self) StepResult {
