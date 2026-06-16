@@ -44,3 +44,10 @@ pub const palette: [4]RGBA = .{
     .{ .r = 52, .g = 104, .b = 86, .a = 255 },
     .{ .r = 8, .g = 24, .b = 32, .a = 255 },
 };
+
+const Flags = struct {
+    gameboy_doctor_enabled: bool = false,
+    mooneye_testing: bool = false,
+};
+
+pub var flags = Flags{};

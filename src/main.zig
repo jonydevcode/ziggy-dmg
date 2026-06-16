@@ -15,6 +15,27 @@ const Timers = @import("Timers.zig");
 const display_enabled = false;
 const gameboy_doctor_enabled = false;
 
+const Args = struct {
+    doctor: bool = false,
+    mooneye: bool = false,
+    rom_file: []const u8 = undefined,
+};
+
+fn parseArgs(args: []const []const u8) !Args {
+    var result = Args{};
+    if (args.len > 3) return error.TooManyArgs;
+    for (args) |arg| {
+        if (std.mem.eql(u8, arg, "--doctor")) {
+            result.doctor = true;
+        } else if (std.mem.eql(u8, arg, "--mooneye")) {
+            result.mooneye = true;
+        } else {
+            result.rom_file = arg;
+        }
+    }
+    return result;
+}
+
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
 
@@ -22,13 +43,16 @@ pub fn main(init: std.process.Init) !void {
     var stderr = std.Io.File.stderr().writer(init.io, &stderr_buf);
 
     // cli args
-    const args = try init.minimal.args.toSlice(allocator);
-    defer allocator.free(args);
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
+    defer init.arena.allocator().free(args);
     if (args.len <= 1) {
-        try stderr.interface.print("Usage: {s} ROM_FILE\n", .{std.fs.path.basename(args[0])});
+        try stderr.interface.print("Usage: {s} --doctor --mooneye ROM_FILE\n", .{std.fs.path.basename(args[0])});
         try stderr.interface.flush();
         return;
     }
+    const parsed_args = try parseArgs(args);
+    config.flags.gameboy_doctor_enabled = parsed_args.doctor;
+    config.flags.mooneye_testing = parsed_args.mooneye;
 
     // random
     const seed: u64 = 12345;
@@ -38,7 +62,7 @@ pub fn main(init: std.process.Init) !void {
     const rng = prng.random();
 
     // get the rom bytes
-    const rom_path = args[1];
+    const rom_path = parsed_args.rom_file;
     var cartridge = Cartridge.init(init.io, allocator, rom_path) catch |err| switch (err) {
         error.FileNotFound => {
             try stderr.interface.print("File not found: {s}\n", .{std.fs.path.basename(args[1])});
@@ -79,7 +103,7 @@ pub fn main(init: std.process.Init) !void {
     cpu.registers.sp = 0xFFFE;
     cpu.registers.pc = 0x0100;
     // std.debug.print("gameboy_doctor_enabled = {}\n", .{gameboy_doctor_enabled});
-    if (gameboy_doctor_enabled) try cpu.writeState(writer);
+    if (config.flags.gameboy_doctor_enabled) try cpu.writeState(writer);
 
     // PPU
     var fake_screen = [_]u2{3} ** (config.screen.height * config.screen.width);
@@ -139,7 +163,7 @@ pub fn main(init: std.process.Init) !void {
             const step_result = cpu.step();
             switch (step_result.new_state) {
                 .running => {
-                    if (gameboy_doctor_enabled) try cpu.writeState(writer);
+                    if (config.flags.gameboy_doctor_enabled) try cpu.writeState(writer);
                 },
                 .halted => {},
                 .stopped => done = true,

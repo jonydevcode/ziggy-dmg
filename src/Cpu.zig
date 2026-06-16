@@ -184,7 +184,7 @@ pub fn step(self: *Self) StepResult {
     const opcode = self.memory.peek(self.registers.pc);
     self.registers.pc += 1;
 
-    if (opcode == 0x40) {
+    if (config.flags.mooneye_testing and opcode == 0x40) {
         // std.debug.print("ld B, B executed\n", .{});
         const b = self.registers.b == 3;
         const c = self.registers.c == 5;
