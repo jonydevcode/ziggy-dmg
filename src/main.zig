@@ -11,6 +11,7 @@ const Frametime = @import("Frametime.zig");
 const Memory = @import("Memory.zig");
 const Interrupts = @import("Interrupts.zig");
 const Timers = @import("Timers.zig");
+const Ppu = @import("Ppu.zig");
 
 const display_enabled = false;
 const gameboy_doctor_enabled = false;
@@ -74,22 +75,26 @@ pub fn main(init: std.process.Init) !void {
     defer cartridge.deinit();
 
     // CPU
+    var ppu = Ppu.init();
     var interrupts = Interrupts.init();
     var timers = Timers.init(&interrupts);
-    var memory = Memory.init(&cartridge, &interrupts, &timers);
+    var memory = Memory.init(&cartridge, &interrupts, &timers, &ppu);
     var cpu = Cpu.init(allocator, rng, &memory, &interrupts, &timers);
     defer cpu.deinit();
 
     // Gameboy Doctor log file
-    var buf: [4096]u8 = undefined;
-    var fixedwriter = std.Io.Writer.fixed(&buf);
-    try fixedwriter.print("{s}.log", .{std.fs.path.basename(args[1])});
-    const log_path = fixedwriter.buffered();
-    var log_file = try std.Io.Dir.cwd().createFile(init.io, log_path, .{ .truncate = true });
-    defer log_file.close(init.io);
-    var write_buf: [4096]u8 = undefined;
-    var file_writer = log_file.writer(init.io, &write_buf);
-    const writer = &file_writer.interface;
+    const maybe_writer = if (config.flags.gameboy_doctor_enabled) blk: {
+        var buf: [4096]u8 = undefined;
+        var fixedwriter = std.Io.Writer.fixed(&buf);
+        try fixedwriter.print("{s}.log", .{std.fs.path.basename(args[1])});
+        const log_path = fixedwriter.buffered();
+        var log_file = try std.Io.Dir.cwd().createFile(init.io, log_path, .{ .truncate = true });
+        defer log_file.close(init.io);
+        var write_buf: [4096]u8 = undefined;
+        var file_writer = log_file.writer(init.io, &write_buf);
+        break :blk &file_writer.interface;
+    } else null;
+    // const writer = &file_writer.interface;
 
     // Gameboy Doctor setup (https://github.com/robert/gameboy-doctor)
     cpu.registers.a = 0x01;
@@ -103,7 +108,7 @@ pub fn main(init: std.process.Init) !void {
     cpu.registers.sp = 0xFFFE;
     cpu.registers.pc = 0x0100;
     // std.debug.print("gameboy_doctor_enabled = {}\n", .{gameboy_doctor_enabled});
-    if (config.flags.gameboy_doctor_enabled) try cpu.writeState(writer);
+    if (maybe_writer) |writer| try cpu.writeState(writer);
 
     // PPU
     var fake_screen = [_]u2{3} ** (config.screen.height * config.screen.width);
@@ -163,7 +168,7 @@ pub fn main(init: std.process.Init) !void {
             const step_result = cpu.step();
             switch (step_result.new_state) {
                 .running => {
-                    if (config.flags.gameboy_doctor_enabled) try cpu.writeState(writer);
+                    if (maybe_writer) |writer| try cpu.writeState(writer);
                 },
                 .halted => {},
                 .stopped => done = true,

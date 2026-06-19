@@ -8,6 +8,7 @@ const Interrupts = @import("Interrupts.zig");
 const Timers = @import("Timers.zig");
 const util = @import("util.zig");
 const Cartridge = @import("Cartridge.zig");
+const Ppu = @import("Ppu.zig");
 
 // rom: []const u8,
 cartridge: *Cartridge,
@@ -19,14 +20,16 @@ extram: [config.cpu.extram_size]u8 = @splat(0),
 
 interrupts: *Interrupts,
 timers: *Timers,
+ppu: *Ppu,
 
 io_unused: [128]u8 = @splat(0),
 
-pub fn init(cartridge: *Cartridge, interrupts: *Interrupts, timers: *Timers) Self {
+pub fn init(cartridge: *Cartridge, interrupts: *Interrupts, timers: *Timers, ppu: *Ppu) Self {
     return Self{
         .cartridge = cartridge,
         .interrupts = interrupts,
         .timers = timers,
+        .ppu = ppu,
     };
 }
 
@@ -69,6 +72,8 @@ pub fn peek(self: *Self, addr: u16) u8 {
             0xFF06 => return self.timers.readTma(),
             0xFF07 => return self.timers.readTac(),
             0xFF0F => return self.interrupts.interrupt_flag,
+            0xFF40 => return self.ppu.readLcdc(),
+            0xFF41 => return self.ppu.readStat(),
             // For Gameboy Doctor
             0xFF44 => return 0x90,
             0xFF4D => return 0xFF, // KEY1 register is unavailable on DMG
@@ -128,6 +133,8 @@ pub fn write(self: *Self, addr: u16, val: u8) void {
             0xFF06 => self.timers.writeTma(val),
             0xFF07 => self.timers.writeTac(val),
             0xFF0F => self.interrupts.interrupt_flag = val,
+            0xFF40 => self.ppu.writeLcdc(val),
+            0xFF41 => self.ppu.writeStat(val),
             else => self.io_unused[addr - 0xFF00] = val,
         }
     } else if (0xFF80 <= addr and addr <= 0xFFFE) {
