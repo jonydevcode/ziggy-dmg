@@ -43,7 +43,7 @@ pub fn peek(self: *Self, addr: u16) u8 {
         return self.cartridge.read(addr);
     } else if (0x8000 <= addr and addr <= 0x9FFF) {
         // 8 KiB Video RAM (VRAM)
-        return self.vram[addr - 0x8000];
+        return self.ppu.readVram(addr);
     } else if (0xA000 <= addr and addr <= 0xBFFF) {
         // 8 KiB External RAM
         return self.extram[addr - 0xA000];
@@ -59,8 +59,7 @@ pub fn peek(self: *Self, addr: u16) u8 {
         return self.wram[addr - 0xE000];
     } else if (0xFE00 <= addr and addr <= 0xFE9F) {
         // Object attribute memory (OAM)
-        // TODO: Implement OAM properly.
-        return self.oam[addr - 0xFE00];
+        return self.ppu.readOam(addr);
     } else if (0xFEA0 <= addr and addr <= 0xFEFF) {
         // Not Usable
         std.debug.panic("Not Usable address: {X}\n", .{addr});
@@ -74,8 +73,8 @@ pub fn peek(self: *Self, addr: u16) u8 {
             0xFF0F => return self.interrupts.interrupt_flag,
             0xFF40 => return self.ppu.readLcdc(),
             0xFF41 => return self.ppu.readStat(),
-            // For Gameboy Doctor
-            0xFF44 => return 0x90,
+            0xFF44 => return self.ppu.readLy(),
+            0xFF45 => return self.ppu.readLyc(),
             0xFF4D => return 0xFF, // KEY1 register is unavailable on DMG
             else => return self.io_unused[addr - 0xFF00],
         }
@@ -103,7 +102,7 @@ pub fn write(self: *Self, addr: u16, val: u8) void {
         self.cartridge.write(addr, val);
     } else if (0x8000 <= addr and addr <= 0x9FFF) {
         // 8 KiB Video RAM (VRAM)
-        self.vram[addr - 0x8000] = val;
+        self.ppu.writeVram(addr, val);
     } else if (0xA000 <= addr and addr <= 0xBFFF) {
         // 8 KiB External RAM
         self.extram[addr - 0xA000] = val;
@@ -119,8 +118,7 @@ pub fn write(self: *Self, addr: u16, val: u8) void {
         self.wram[addr - 0xE000] = val;
     } else if (0xFE00 <= addr and addr <= 0xFE9F) {
         // Object attribute memory (OAM)
-        // TODO: Implement OAM properly.
-        self.oam[addr - 0xFE00] = val;
+        self.ppu.writeOam(addr, val);
     } else if (0xFEA0 <= addr and addr <= 0xFEFF) {
         // Not Usable
         std.debug.panic("Not Usable address: {X}\n", .{addr});
@@ -135,6 +133,7 @@ pub fn write(self: *Self, addr: u16, val: u8) void {
             0xFF0F => self.interrupts.interrupt_flag = val,
             0xFF40 => self.ppu.writeLcdc(val),
             0xFF41 => self.ppu.writeStat(val),
+            0xFF45 => self.ppu.writeLyc(val),
             else => self.io_unused[addr - 0xFF00] = val,
         }
     } else if (0xFF80 <= addr and addr <= 0xFFFE) {

@@ -75,8 +75,8 @@ pub fn main(init: std.process.Init) !void {
     defer cartridge.deinit();
 
     // CPU
-    var ppu = Ppu.init();
     var interrupts = Interrupts.init();
+    var ppu = Ppu.init(&interrupts);
     var timers = Timers.init(&interrupts);
     var memory = Memory.init(&cartridge, &interrupts, &timers, &ppu);
     var cpu = Cpu.init(allocator, rng, &memory, &interrupts, &timers);
