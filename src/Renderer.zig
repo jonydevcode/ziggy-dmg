@@ -25,9 +25,9 @@ pub fn init(
     frame_buf: *[frame_width * frame_height]RGBA,
 ) !Self {
     try sdlx.check("SDL_SetAppMetadata", sdl.SDL_SetAppMetadata(
-        "zigb-emu: Gameboy Emulator",
+        "ziggy-dmg: Gameboy Emulator",
         "0.1.0",
-        "jonydevcode.zigb-emu",
+        "jonydevcode.ziggy-dmg",
     ));
 
     try sdlx.check("SDL_Init", sdl.SDL_Init(sdl.SDL_INIT_VIDEO | sdl.SDL_INIT_AUDIO));
@@ -39,7 +39,7 @@ pub fn init(
 
     // Create a window
     const window = sdl.SDL_CreateWindow(
-        "zigb-emu: Gameboy Emulator (@jonydevcode)",
+        "ziggy-dmg: Gameboy Emulator (@jonydevcode)",
         window_width,
         window_height,
         sdl.SDL_WINDOW_RESIZABLE | sdl.SDL_WINDOW_HIGH_PIXEL_DENSITY,

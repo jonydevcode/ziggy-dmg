@@ -50,7 +50,7 @@ pub const Lcdc = packed struct(u8) {
     obj_enable: bool = false,
     obj_size: ObjSize = .size_8x8,
     bg_tile_map_area: TileMapArea = .mem_9800_9bff,
-    bg_tile_data_area: TileDataArea = .mem_8800_97ff,
+    tile_data_area: TileDataArea = .mem_8800_97ff,
     window_enable: bool = false,
     window_tile_map_area: TileMapArea = .mem_9800_9bff,
     lcd_ppu_enabled: bool = false, // bit 7
@@ -123,6 +123,95 @@ pub fn init(interrupts: *Interrupts) Self {
     };
 }
 
+/// Steps the PPU for 1 M-cycle
+pub fn step(self: *Self) void {
+    for (0..4) |_| {
+        self.stepDot();
+    }
+}
+
+/// Steps the PPU for 1 dot. There are 4 dots in 1 M-cycle.
+pub fn stepDot(self: *Self) void {
+    if (!self.lcdc.lcd_ppu_enabled) {
+        return;
+    }
+
+    if (self.ly < 144) {
+        self.stepVisibleLine();
+    } else {
+        self.stepVblankLine();
+    }
+}
+
+/// See here for the dots and modes: https://gbdev.io/pandocs/Rendering.html#ppu-modes
+/// Lines 0-143 are visible
+pub fn stepVisibleLine(self: *Self) void {
+    self.line_dot += 1;
+
+    if (self.line_dot == 80) {
+        self.setMode(.drawing_3);
+        return;
+    }
+
+    if (self.line_dot == 252) {
+        self.renderBgAndWindowLine();
+        self.setMode(.hblank_0);
+        return;
+    }
+
+    if (self.line_dot == 456) {
+        self.line_dot = 0;
+        self.ly += 1;
+
+        if (self.ly == 144) {
+            self.setMode(.vblank_1);
+            self.interrupts.request(.vblank);
+        } else {
+            self.setMode(.oam_scan_2);
+        }
+
+        // Part of the STAT line includes checking ly==lyc, so check here
+        // since self.ly is incremented in this block
+        self.checkStatInterrupt();
+    }
+}
+
+fn renderBgAndWindowLine(self: *Self) void {
+    if (self.ly >= 144) return; // not visible
+
+    for (0..160) |x| {
+        const pixel = switch (self.lcdc.bg_window_enable) {
+            true => switch (self.isWindowCoveringPixel(x, self.ly)) {
+                true => self.getWindowRawPixel(x, self.ly),
+                false => self.getBgRawPixel(x, self.ly),
+            },
+            false => 0,
+        };
+
+        // const pixel = if (self.lcdc.bg_window_enable)
+        //     self.rawToPalette(self.getBgRawPixel(x, self.ly))
+        // else
+        //     0;
+        // std.debug.print("self.ly = {d}, x = {d}\n", .{ self.ly, x });
+        self.framebuf[@as(usize, self.ly) * 160 + x] = pixel;
+    }
+}
+
+/// Lines 144-153 are VBlank
+pub fn stepVblankLine(self: *Self) void {
+    self.line_dot += 1;
+    if (self.line_dot == 456) {
+        self.line_dot = 0;
+        self.ly += 1;
+
+        if (self.ly == 154) {
+            self.ly = 0;
+            self.mode = .oam_scan_2;
+            self.frame_ready = true;
+        }
+    }
+}
+
 pub fn writeLcdc(self: *Self, byte: u8) void {
     const old_lcdc = self.lcdc;
     const now_lcdc = Lcdc.fromByte(byte);
@@ -149,74 +238,6 @@ pub fn readStat(self: *Self) u8 {
     const lyc_eq_ly = @intFromBool(self.lyc == self.ly);
     const ppu_mode = @intFromEnum(self.mode);
     return stat_interrupt_cond | (@as(u8, lyc_eq_ly) << 2) | ppu_mode;
-}
-
-/// See here for the dots and modes: https://gbdev.io/pandocs/Rendering.html#ppu-modes
-/// Lines 0-143 are visible
-pub fn stepVisibleLine(self: *Self) void {
-    self.line_dot += 1;
-
-    if (self.line_dot == 80) {
-        self.setMode(.drawing_3);
-        return;
-    }
-
-    if (self.line_dot == 252) {
-        self.renderBgLine();
-        self.setMode(.hblank_0);
-        return;
-    }
-
-    if (self.line_dot == 456) {
-        self.line_dot = 0;
-        self.ly += 1;
-
-        if (self.ly == 144) {
-            self.setMode(.vblank_1);
-            self.interrupts.request(.vblank);
-        } else {
-            self.setMode(.oam_scan_2);
-        }
-
-        // Part of the STAT line includes checking ly==lyc, so check here
-        // since self.ly is incremented in this block
-        self.checkStatInterrupt();
-    }
-}
-
-/// Lines 144-153 are VBlank
-pub fn stepVblankLine(self: *Self) void {
-    self.line_dot += 1;
-    if (self.line_dot == 456) {
-        self.line_dot = 0;
-        self.ly += 1;
-
-        if (self.ly == 154) {
-            self.ly = 0;
-            self.mode = .oam_scan_2;
-            self.frame_ready = true;
-        }
-    }
-}
-
-/// Steps the PPU for 1 dot. There are 4 dots in 1 M-cycle.
-pub fn stepDot(self: *Self) void {
-    if (!self.lcdc.lcd_ppu_enabled) {
-        return;
-    }
-
-    if (self.ly < 144) {
-        self.stepVisibleLine();
-    } else {
-        self.stepVblankLine();
-    }
-}
-
-/// Steps the PPU for 1 M-cycle
-pub fn step(self: *Self) void {
-    for (0..4) |_| {
-        self.stepDot();
-    }
 }
 
 pub fn disableLcd(self: *Self) void {
@@ -305,6 +326,7 @@ pub inline fn readScy(self: *Self) u8 {
 pub inline fn writeScy(self: *Self, val: u8) void {
     self.scy = val;
 }
+
 pub inline fn readScx(self: *Self) u8 {
     return self.scx;
 }
@@ -312,6 +334,23 @@ pub inline fn readScx(self: *Self) u8 {
 pub inline fn writeScx(self: *Self, val: u8) void {
     self.scx = val;
 }
+
+pub inline fn readWy(self: *Self) u8 {
+    return self.wy;
+}
+
+pub inline fn writeWy(self: *Self, val: u8) void {
+    self.wy = val;
+}
+
+pub inline fn readWx(self: *Self) u8 {
+    return self.wx;
+}
+
+pub inline fn writeWx(self: *Self, val: u8) void {
+    self.wx = val;
+}
+
 /// The various STAT interrupt sources (modes 0-2 and LYC=LY) have their state (inactive=low and active=high) logically ORed into a shared “STAT interrupt line” if their respective enable bit is turned on. A STAT interrupt will be triggered by a rising edge (transition from low to high) on the STAT interrupt line.
 /// More details: https://gbdev.io/pandocs/Interrupt_Sources.html#int-48--stat-interrupt
 pub fn getStatLine(self: *Self) bool {
@@ -321,6 +360,7 @@ pub fn getStatLine(self: *Self) bool {
     const mode2 = self.mode == .oam_scan_2 and self.stat.mode2_select;
     return lyc_eq_ly or mode0 or mode1 or mode2;
 }
+
 /// Requests an interrupt on a rising edge on the STAT line
 /// Call it:
 /// - after mode changes
@@ -341,19 +381,6 @@ fn setMode(self: *Self, mode: PpuMode) void {
     self.checkStatInterrupt();
 }
 
-fn renderBgLine(self: *Self) void {
-    if (self.ly >= 144) return; // not visible
-
-    for (0..160) |x| {
-        const pixel = if (self.lcdc.bg_window_enable)
-            self.rawToPalette(self.getBgRawPixel(x, self.ly))
-        else
-            0;
-        // std.debug.print("self.ly = {d}, x = {d}\n", .{ self.ly, x });
-        self.framebuf[@as(usize, self.ly) * 160 + x] = pixel;
-    }
-}
-
 /// A tile is an 8 by 8 image. It uses 16 bytes. Each row uses 2 bytes.
 fn readTilePixel(self: *Self, index: u16, row: u3, col: u3) u2 {
     const lo_byte = self.vram[index + @as(u16, row) * 2];
@@ -371,9 +398,9 @@ inline fn vramIndexFromAddr(addr: u16) u16 {
     return addr - 0x8000;
 }
 
-inline fn bgTileAddr(self: *Self, tile_id: u8) u16 {
+inline fn getTileDataAddr(self: *Self, tile_id: u8) u16 {
     // each tile is 16 bytes
-    switch (self.lcdc.bg_tile_data_area) {
+    switch (self.lcdc.tile_data_area) {
         .mem_8000_8fff => return 0x8000 + @as(u16, tile_id) * 16,
         .mem_8800_97ff => {
             const tile_id_signed: i8 = @bitCast(tile_id);
@@ -383,8 +410,8 @@ inline fn bgTileAddr(self: *Self, tile_id: u8) u16 {
     unreachable;
 }
 
-fn getBgTilePixel(self: *Self, tile_id: u8, row: u3, col: u3) u2 {
-    const addr = self.bgTileAddr(tile_id);
+fn getTilePixelByTileId(self: *Self, tile_id: u8, row: u3, col: u3) u2 {
+    const addr = self.getTileDataAddr(tile_id);
     const index = vramIndexFromAddr(addr);
     return self.readTilePixel(index, row, col);
 }
@@ -409,13 +436,49 @@ fn getBgRawPixel(self: *Self, screen_x: usize, screen_y: usize) u2 {
     const tile_id = self.getBgTile(bg_x, bg_y);
     const row: u3 = @intCast(bg_y % 8);
     const col: u3 = @intCast(bg_x % 8);
-    return self.getBgTilePixel(tile_id, row, col);
+    return self.getTilePixelByTileId(tile_id, row, col);
 }
 
 /// Each raw value is a 2 bit colour ID, which indexes into the BGP register
 /// to retrieve the actual palette colour (also 2 bits).
 fn rawToPalette(self: *Self, raw: u2) u2 {
     return @intCast((self.bgp >> (@as(u3, raw) * 2)) & 0b11);
+}
+
+fn isWindowCoveringPixel(self: *Self, screen_x: usize, screen_y: usize) bool {
+    if (!self.lcdc.bg_window_enable) return false;
+    if (!self.lcdc.window_enable) return false;
+    if (screen_y < self.wy) return false;
+
+    const window_x = self.wx -| 7;
+    if (screen_x < window_x) return false;
+
+    return true;
+}
+
+fn getWindowTileId(self: *Self, window_x: usize, window_y: usize) u8 {
+    const tile_x: u5 = @intCast((window_x / 8) % 32);
+    const tile_y: u5 = @intCast((window_y / 8) % 32);
+    const map_addr = self.lcdc.window_tile_map_area.start();
+    const entry_addr = map_addr + @as(u16, tile_y) * 32 + tile_x;
+    return self.vram[vramIndexFromAddr(entry_addr)];
+}
+
+/// screen_x: 0..160 - the x pos on the gameboy's screen
+/// screen_y: 0..144 - the y pos on the gameboy's screen
+fn getWindowRawPixel(self: *Self, screen_x: usize, screen_y: usize) u2 {
+    // Convert the screen pos into a relative pos within the window
+    // screen_x is where you are on the Game Boy screen
+    // window_x is where that same pixel is inside the Window layer
+    // window_x will never be negative because isWindowCoveringPixel() is a prerequisite
+    // for calling this fn, and that does the check already.
+    // TODO: Figure out whether I need wx as an int or uint is ok
+    const window_x = screen_x - (@as(usize, self.wx) -| 7);
+    const window_y = screen_y - self.wy;
+    const tile_id = self.getWindowTileId(window_x, window_y);
+    const row: u3 = @intCast(window_y % 8);
+    const col: u3 = @intCast(window_x % 8);
+    return self.getTilePixelByTileId(tile_id, row, col);
 }
 
 test "Stat tests" {
