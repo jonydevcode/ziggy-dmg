@@ -73,8 +73,11 @@ pub fn peek(self: *Self, addr: u16) u8 {
             0xFF0F => return self.interrupts.interrupt_flag,
             0xFF40 => return self.ppu.readLcdc(),
             0xFF41 => return self.ppu.readStat(),
+            0xFF42 => return self.ppu.readScy(),
+            0xFF43 => return self.ppu.readScx(),
             0xFF44 => return self.ppu.readLy(),
             0xFF45 => return self.ppu.readLyc(),
+            0xFF47 => return self.ppu.readBgp(),
             0xFF4D => return 0xFF, // KEY1 register is unavailable on DMG
             else => return self.io_unused[addr - 0xFF00],
         }
@@ -133,7 +136,10 @@ pub fn write(self: *Self, addr: u16, val: u8) void {
             0xFF0F => self.interrupts.interrupt_flag = val,
             0xFF40 => self.ppu.writeLcdc(val),
             0xFF41 => self.ppu.writeStat(val),
+            0xFF42 => self.ppu.writeScy(val),
+            0xFF43 => self.ppu.writeScx(val),
             0xFF45 => self.ppu.writeLyc(val),
+            0xFF47 => self.ppu.writeBgp(val),
             else => self.io_unused[addr - 0xFF00] = val,
         }
     } else if (0xFF80 <= addr and addr <= 0xFFFE) {

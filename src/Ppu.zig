@@ -16,13 +16,13 @@ interrupts: *Interrupts,
 
 vram: [8192]u8 = @splat(0),
 oam: [160]u8 = @splat(0),
-framebuf: [160 * 144]u8 = @splat(0),
+framebuf: [160 * 144]u2 = @splat(0), // each pixel is 2 bits, representing 4 colours
 
 // Registers (addr $FF40 through $FF4B)
 lcdc: Lcdc = Lcdc.fromByte(0), // LCD control
 stat: Stat = Stat.fromByte(0), // LCD status and STAT interrupt
-scy: u8 = 0, // Background scroll Y
-scx: u8 = 0, // Background scroll X
+scy: u8 = 0, // Background viewport Y position
+scx: u8 = 0, // Background viewport X position
 ly: u8 = 0, // Current scanline number (0-153)
 lyc: u8 = 0, // LY compare value
 dma: u8 = 0, // OAM DMA start register
@@ -34,8 +34,9 @@ wx: u8 = 0, // window x position plus 7
 
 mode: PpuMode,
 line_dot: u16 = 0, // position within the current scanline (0-455)
-frame_ready: bool = false,
+frame_ready: bool = false, // to tell main() that a frame has finished
 prev_stat_line: bool = false,
+need_blank_framebuf: bool = false,
 
 pub const PpuMode = enum(u2) {
     hblank_0 = 0, // also reports this when PPU is disable
@@ -77,7 +78,7 @@ pub const Lcdc = packed struct(u8) {
         }
     };
     pub const TileDataArea = enum(u1) {
-        mem_8800_97ff = 0,
+        mem_8800_97ff = 0, // signed, starts at 0x9000
         mem_8000_8fff = 1,
 
         pub fn start(self: TileDataArea) u16 {
@@ -161,7 +162,7 @@ pub fn stepVisibleLine(self: *Self) void {
     }
 
     if (self.line_dot == 252) {
-        self.renderBlankLine();
+        self.renderBgLine();
         self.setMode(.hblank_0);
         return;
     }
@@ -230,6 +231,16 @@ pub fn enableLcd(self: *Self) void {
     self.line_dot = 0;
     self.mode = .oam_scan_2;
     self.frame_ready = false;
+    self.need_blank_framebuf = true;
+    self.checkStatInterrupt();
+}
+
+fn startNewFrame(self: *Self) void {
+    if (self.need_blank_framebuf) {
+        self.framebuf = @splat(0);
+        self.need_blank_framebuf = false;
+    }
+    self.frame_ready = true;
 }
 
 pub fn isVramAccessible(self: *Self) bool {
@@ -279,6 +290,28 @@ pub fn writeLyc(self: *Self, val: u8) void {
     self.checkStatInterrupt();
 }
 
+pub inline fn readBgp(self: *Self) u8 {
+    return self.bgp;
+}
+
+pub inline fn writeBgp(self: *Self, val: u8) void {
+    self.bgp = val;
+}
+
+pub inline fn readScy(self: *Self) u8 {
+    return self.scy;
+}
+
+pub inline fn writeScy(self: *Self, val: u8) void {
+    self.scy = val;
+}
+pub inline fn readScx(self: *Self) u8 {
+    return self.scx;
+}
+
+pub inline fn writeScx(self: *Self, val: u8) void {
+    self.scx = val;
+}
 /// The various STAT interrupt sources (modes 0-2 and LYC=LY) have their state (inactive=low and active=high) logically ORed into a shared “STAT interrupt line” if their respective enable bit is turned on. A STAT interrupt will be triggered by a rising edge (transition from low to high) on the STAT interrupt line.
 /// More details: https://gbdev.io/pandocs/Interrupt_Sources.html#int-48--stat-interrupt
 pub fn getStatLine(self: *Self) bool {
@@ -308,12 +341,83 @@ fn setMode(self: *Self, mode: PpuMode) void {
     self.checkStatInterrupt();
 }
 
-fn renderBlankLine(self: *Self) void {
+fn renderBgLine(self: *Self) void {
     if (self.ly >= 144) return; // not visible
+
     for (0..160) |x| {
-        self.framebuf[self.ly * 160 + x] = 0;
+        const pixel = if (self.lcdc.bg_window_enable)
+            self.rawToPalette(self.getBgRawPixel(x, self.ly))
+        else
+            0;
+
+        self.framebuf[self.ly * 160 + x] = pixel;
     }
 }
+
+/// A tile is an 8 by 8 image. It uses 16 bytes. Each row uses 2 bytes.
+fn readTilePixel(self: *Self, index: u16, row: usize, col: usize) u2 {
+    const lo_byte = self.vram[index + row * 2];
+    const hi_byte = self.vram[index + row * 2 + 1];
+
+    // bit 7 = leftmost pixel, bit 0 = rightmost
+    const bit_index = 7 - col;
+    const lo_bit: u1 = (lo_byte >> bit_index) & 1;
+    const hi_bit: u1 = (hi_byte >> bit_index) & 1;
+
+    return (@as(u2, hi_bit) << 1) | lo_bit;
+}
+
+inline fn vramIndexFromAddr(addr: u16) u16 {
+    return addr - 0x8000;
+}
+
+inline fn bgTileAddr(self: *Self, tile_id: u8) u16 {
+    // each tile is 16 bytes
+    switch (self.lcdc.bg_tile_data_area) {
+        .mem_8000_8fff => return 0x8000 + tile_id * 16,
+        .mem_8800_97ff => {
+            const tile_id_signed: i8 = @bitCast(tile_id);
+            return @as(u16, tile_id_signed) * 16 + 0x9000;
+        },
+    }
+    unreachable;
+}
+
+fn getBgTilePixel(self: *Self, tile_id: u8, row: usize, col: usize) u2 {
+    const addr = self.bgTileAddr(tile_id);
+    const index = vramIndexFromAddr(addr);
+    return self.readTilePixel(index, row, col);
+}
+
+inline fn bgMapAddr(self: *Self) u16 {
+    return self.lcdc.bg_tile_map_area.start();
+}
+
+/// bg_x and bg_y are coordinates within the 256 x 256 background tile map
+/// Due to scrolling, bg_x and bg_y may be >=256 and need to do wrapping
+fn getBgTile(self: *Self, bg_x: usize, bg_y: usize) u8 {
+    const tile_x = (bg_x / 8) % 32;
+    const tile_y = (bg_y / 8) % 32;
+    const map_addr = self.bgMapAddr();
+    const tile_addr = map_addr + tile_y * 32 + tile_x;
+    return self.vram[vramIndexFromAddr(tile_addr)];
+}
+
+fn getBgRawPixel(self: *Self, screen_x: usize, screen_y: usize) u2 {
+    const bg_x = (self.scx + screen_x) % 256;
+    const bg_y = (self.scy + screen_y) % 256;
+    const tile_id = self.getBgTile(bg_x, bg_y);
+    const row = bg_y % 8;
+    const col = bg_x % 8;
+    return self.getBgTilePixel(tile_id, row, col);
+}
+
+/// Each raw value is a 2 bit colour ID, which indexes into the BGP register
+/// to retrieve the actual palette colour (also 2 bits).
+fn rawToPalette(self: *Self, raw: u2) u2 {
+    return (self.bgp >> (raw * 2)) * 0b11;
+}
+
 test "Stat tests" {
     var ppu = Self.init();
     ppu.writeLcdc(0b10000000); // trigger the falling edge on ppu enable
