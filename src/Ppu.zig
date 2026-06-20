@@ -349,20 +349,20 @@ fn renderBgLine(self: *Self) void {
             self.rawToPalette(self.getBgRawPixel(x, self.ly))
         else
             0;
-
-        self.framebuf[self.ly * 160 + x] = pixel;
+        // std.debug.print("self.ly = {d}, x = {d}\n", .{ self.ly, x });
+        self.framebuf[@as(usize, self.ly) * 160 + x] = pixel;
     }
 }
 
 /// A tile is an 8 by 8 image. It uses 16 bytes. Each row uses 2 bytes.
-fn readTilePixel(self: *Self, index: u16, row: usize, col: usize) u2 {
-    const lo_byte = self.vram[index + row * 2];
-    const hi_byte = self.vram[index + row * 2 + 1];
+fn readTilePixel(self: *Self, index: u16, row: u3, col: u3) u2 {
+    const lo_byte = self.vram[index + @as(u16, row) * 2];
+    const hi_byte = self.vram[index + @as(u16, row) * 2 + 1];
 
     // bit 7 = leftmost pixel, bit 0 = rightmost
-    const bit_index = 7 - col;
-    const lo_bit: u1 = (lo_byte >> bit_index) & 1;
-    const hi_bit: u1 = (hi_byte >> bit_index) & 1;
+    const bit_index: u3 = 7 - col;
+    const lo_bit: u1 = @intCast((lo_byte >> bit_index) & 1);
+    const hi_bit: u1 = @intCast((hi_byte >> bit_index) & 1);
 
     return (@as(u2, hi_bit) << 1) | lo_bit;
 }
@@ -374,16 +374,16 @@ inline fn vramIndexFromAddr(addr: u16) u16 {
 inline fn bgTileAddr(self: *Self, tile_id: u8) u16 {
     // each tile is 16 bytes
     switch (self.lcdc.bg_tile_data_area) {
-        .mem_8000_8fff => return 0x8000 + tile_id * 16,
+        .mem_8000_8fff => return 0x8000 + @as(u16, tile_id) * 16,
         .mem_8800_97ff => {
             const tile_id_signed: i8 = @bitCast(tile_id);
-            return @as(u16, tile_id_signed) * 16 + 0x9000;
+            return @as(u16, 0x9000) + @as(u16, @bitCast(@as(i16, tile_id_signed) * 16));
         },
     }
     unreachable;
 }
 
-fn getBgTilePixel(self: *Self, tile_id: u8, row: usize, col: usize) u2 {
+fn getBgTilePixel(self: *Self, tile_id: u8, row: u3, col: u3) u2 {
     const addr = self.bgTileAddr(tile_id);
     const index = vramIndexFromAddr(addr);
     return self.readTilePixel(index, row, col);
@@ -396,10 +396,10 @@ inline fn bgMapAddr(self: *Self) u16 {
 /// bg_x and bg_y are coordinates within the 256 x 256 background tile map
 /// Due to scrolling, bg_x and bg_y may be >=256 and need to do wrapping
 fn getBgTile(self: *Self, bg_x: usize, bg_y: usize) u8 {
-    const tile_x = (bg_x / 8) % 32;
-    const tile_y = (bg_y / 8) % 32;
+    const tile_x: u5 = @intCast((bg_x / 8) % 32);
+    const tile_y: u5 = @intCast((bg_y / 8) % 32);
     const map_addr = self.bgMapAddr();
-    const tile_addr = map_addr + tile_y * 32 + tile_x;
+    const tile_addr: u16 = map_addr + @as(u16, tile_y) * 32 + tile_x;
     return self.vram[vramIndexFromAddr(tile_addr)];
 }
 
@@ -407,15 +407,15 @@ fn getBgRawPixel(self: *Self, screen_x: usize, screen_y: usize) u2 {
     const bg_x = (self.scx + screen_x) % 256;
     const bg_y = (self.scy + screen_y) % 256;
     const tile_id = self.getBgTile(bg_x, bg_y);
-    const row = bg_y % 8;
-    const col = bg_x % 8;
+    const row: u3 = @intCast(bg_y % 8);
+    const col: u3 = @intCast(bg_x % 8);
     return self.getBgTilePixel(tile_id, row, col);
 }
 
 /// Each raw value is a 2 bit colour ID, which indexes into the BGP register
 /// to retrieve the actual palette colour (also 2 bits).
 fn rawToPalette(self: *Self, raw: u2) u2 {
-    return (self.bgp >> (raw * 2)) * 0b11;
+    return @intCast((self.bgp >> (@as(u3, raw) * 2)) & 0b11);
 }
 
 test "Stat tests" {

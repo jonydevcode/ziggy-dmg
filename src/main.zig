@@ -13,7 +13,7 @@ const Interrupts = @import("Interrupts.zig");
 const Timers = @import("Timers.zig");
 const Ppu = @import("Ppu.zig");
 
-const display_enabled = false;
+const display_enabled = true;
 const gameboy_doctor_enabled = false;
 
 const Args = struct {
@@ -83,18 +83,21 @@ pub fn main(init: std.process.Init) !void {
     defer cpu.deinit();
 
     // Gameboy Doctor log file
+    var log_file: ?std.Io.File = null;
+    defer if (log_file) |*file| {
+        file.close(init.io);
+    };
+    var write_buf: [4096]u8 = undefined;
+    var file_writer: ?std.Io.File.Writer = null;
     const maybe_writer = if (config.flags.gameboy_doctor_enabled) blk: {
         var buf: [4096]u8 = undefined;
         var fixedwriter = std.Io.Writer.fixed(&buf);
         try fixedwriter.print("{s}.log", .{std.fs.path.basename(args[1])});
         const log_path = fixedwriter.buffered();
-        var log_file = try std.Io.Dir.cwd().createFile(init.io, log_path, .{ .truncate = true });
-        defer log_file.close(init.io);
-        var write_buf: [4096]u8 = undefined;
-        var file_writer = log_file.writer(init.io, &write_buf);
-        break :blk &file_writer.interface;
+        log_file = try std.Io.Dir.cwd().createFile(init.io, log_path, .{ .truncate = true });
+        file_writer = log_file.?.writer(init.io, &write_buf);
+        break :blk &file_writer.?.interface;
     } else null;
-    // const writer = &file_writer.interface;
 
     // Gameboy Doctor setup (https://github.com/robert/gameboy-doctor)
     cpu.registers.a = 0x01;
@@ -107,11 +110,10 @@ pub fn main(init: std.process.Init) !void {
     cpu.registers.l = 0x4D;
     cpu.registers.sp = 0xFFFE;
     cpu.registers.pc = 0x0100;
-    // std.debug.print("gameboy_doctor_enabled = {}\n", .{gameboy_doctor_enabled});
     if (maybe_writer) |writer| try cpu.writeState(writer);
 
     // PPU
-    var fake_screen = [_]u2{3} ** (config.screen.height * config.screen.width);
+    // var fake_screen = [_]u2{3} ** (config.screen.height * config.screen.width);
     const palette = config.palette;
 
     // renderer
@@ -179,7 +181,13 @@ pub fn main(init: std.process.Init) !void {
                 },
             }
 
-            display_changed = step_result.display_changed;
+            const m_cycles_used = step_result.t_cycles_used / 4;
+            for (0..m_cycles_used) |_| {
+                ppu.step();
+            }
+
+            // display_changed = step_result.display_changed;
+            display_changed = ppu.frame_ready;
             t_cycles += step_result.t_cycles_used;
 
             // timers.tick(step_result.t_cycles_used, &interrupts);
@@ -191,10 +199,11 @@ pub fn main(init: std.process.Init) !void {
         if (display_enabled) {
             // Present the screen at the target fps
             if (display_changed) {
-                for (&fake_screen) |*p| {
-                    p.* = rng.uintAtMost(u2, 3);
-                }
-                try renderer.paint(&fake_screen, &palette);
+                // for (&fake_screen) |*p| {
+                //     p.* = rng.uintAtMost(u2, 3);
+                // }
+                // try renderer.paint(&fake_screen, &palette);
+                try renderer.paint(&ppu.framebuf, &palette);
                 display_changed = false;
                 perf.renderer_ns += perf.lap();
             }
