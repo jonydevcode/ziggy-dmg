@@ -11,6 +11,7 @@ The current contents of this repository were written **without** LLM/AI code gen
 
 ## Devlog
 
+- **2026-06-20**: First visuals from the PPU seen on the SDL3 renderer.
 - **2026-06-15**: Passed all tests in `mooneye-test-suite/acceptance/timer`.
 - **2026-06-12**: Passed the full blargg's `cpu_instrs` test rom.
 - **2026-06-08**: Fixed a bunch of CPU instruction bugs. Blargg's `cpu_instrs` individual test roms 03 to 11 now pass.
@@ -43,6 +44,7 @@ zig build run -- rom_file.gb
 - [gbdev.io](https://gbdev.io/)
 - [Blargg's test roms](https://github.com/retrio/gb-test-roms)
 - [Mooneye test suite](https://github.com/Gekkio/mooneye-test-suite)
+- [dmg-acid2 test rom](https://github.com/mattcurrie/dmg-acid2)
 
 ## License
 
