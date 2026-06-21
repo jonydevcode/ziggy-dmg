@@ -29,7 +29,8 @@ pub const RomOnly = struct {
     }
 
     pub fn write(addr: u16) void {
-        std.debug.panic("Attemping to write to read-only ROM address {X}\n", .{addr});
+        _ = addr;
+        // std.debug.print("Attemping to write to read-only ROM address {X}\n", .{addr});
     }
 };
 

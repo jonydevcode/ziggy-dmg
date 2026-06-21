@@ -62,7 +62,8 @@ pub fn peek(self: *Self, addr: u16) u8 {
         return self.ppu.readOam(addr);
     } else if (0xFEA0 <= addr and addr <= 0xFEFF) {
         // Not Usable
-        std.debug.panic("Not Usable address: {X}\n", .{addr});
+        // std.debug.panic("Not Usable address: {X}\n", .{addr});
+        return 0xFF;
     } else if (0xFF00 <= addr and addr <= 0xFF7F) {
         // I/O Registers
         switch (addr) {
@@ -128,7 +129,7 @@ pub fn write(self: *Self, addr: u16, val: u8) void {
         self.ppu.writeOam(addr, val);
     } else if (0xFEA0 <= addr and addr <= 0xFEFF) {
         // Not Usable
-        std.debug.panic("Not Usable address: {X}\n", .{addr});
+        // std.debug.print("Writing to Not Usable address: {X}\n", .{addr});
     } else if (0xFF00 <= addr and addr <= 0xFF7F) {
         // I/O Registers
         switch (addr) {
@@ -143,6 +144,7 @@ pub fn write(self: *Self, addr: u16, val: u8) void {
             0xFF42 => self.ppu.writeScy(val),
             0xFF43 => self.ppu.writeScx(val),
             0xFF45 => self.ppu.writeLyc(val),
+            0xFF46 => self.ppu.writeDma(val),
             0xFF47 => self.ppu.writeBgp(val),
             0xFF48 => self.ppu.writeObp0(val),
             0xFF49 => self.ppu.writeObp1(val),

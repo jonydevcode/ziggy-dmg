@@ -99,7 +99,7 @@ pub fn main(init: std.process.Init) !void {
         break :blk &file_writer.?.interface;
     } else null;
 
-    // Gameboy Doctor setup (https://github.com/robert/gameboy-doctor)
+    // Power up sequence: https://gbdev.io/pandocs/Power_Up_Sequence.html
     cpu.registers.a = 0x01;
     cpu.registers.f = 0xB0;
     cpu.registers.b = 0x00;
@@ -110,6 +110,24 @@ pub fn main(init: std.process.Init) !void {
     cpu.registers.l = 0x4D;
     cpu.registers.sp = 0xFFFE;
     cpu.registers.pc = 0x0100;
+    timers.div = 0xAB;
+    timers.tima = 0;
+    timers.tma = 0;
+    timers.tac = 0xF8;
+    interrupts.interrupt_flag = 0xE1;
+    interrupts.interrupt_enable = 0;
+    ppu.lcdc = .fromByte(0x91);
+    ppu.stat = .fromByte(0x85);
+    ppu.scy = 0;
+    ppu.scx = 0;
+    ppu.ly = 0;
+    ppu.lyc = 0;
+    ppu.dma = 0xFF;
+    ppu.dma_source = @as(u16, ppu.dma) << 8;
+    ppu.bgp = 0xFC;
+    ppu.wy = 0;
+    ppu.wx = 0;
+
     if (maybe_writer) |writer| try cpu.writeState(writer);
 
     // PPU

@@ -26,6 +26,7 @@ pub fn init(
     } else try Dir.readFileAlloc(Dir.cwd(), io, path, allocator, .unlimited);
 
     const map = getMapper(rom[0x147]);
+    std.debug.print("Mapper type = {s}\n", .{@tagName(map)});
     const rom_size = getRomSize(rom[0x148]);
     const ram_size = getRamSize(rom[0x149]);
 
