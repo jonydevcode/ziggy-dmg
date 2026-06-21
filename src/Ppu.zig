@@ -2,6 +2,7 @@ const Self = @This();
 const util = @import("util.zig");
 const std = @import("std");
 const Interrupts = @import("Interrupts.zig");
+const Memory = @import("Memory.zig");
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 
@@ -40,6 +41,11 @@ line_dot: u16 = 0, // position within the current scanline (0-455)
 frame_ready: bool = false, // to tell main() that a frame has finished
 prev_stat_line: bool = false,
 need_blank_framebuf: bool = false,
+window_line: u8 = 0,
+
+dma_active: bool = false,
+dma_source: u16 = 0,
+dma_index: u8 = 0,
 
 pub const PpuMode = enum(u2) {
     hblank_0 = 0, // also reports this when PPU is disable
@@ -163,9 +169,23 @@ pub fn init(interrupts: *Interrupts) Self {
 }
 
 /// Steps the PPU for 1 M-cycle
-pub fn step(self: *Self) void {
+pub fn step(self: *Self, memory: *Memory) void {
+    self.stepDma(memory);
     for (0..4) |_| {
         self.stepDot();
+    }
+}
+
+fn stepDma(self: *Self, memory: *Memory) void {
+    if (!self.dma_active) return;
+
+    const addr = self.dma_source + self.dma_index;
+    const val = memory.read(addr);
+    self.oam[self.dma_index] = val;
+    self.dma_index += 1;
+
+    if (self.dma_index == 160) {
+        self.dma_active = false;
     }
 }
 
@@ -220,10 +240,14 @@ pub fn stepVisibleLine(self: *Self) void {
 fn renderLine(self: *Self) void {
     if (self.ly >= 144) return; // not visible
 
+    var window_drawn = false;
     for (0..160) |x| {
         const bg_raw = switch (self.lcdc.bg_window_enable) {
             true => switch (self.isWindowCoveringPixel(x, self.ly)) {
-                true => self.getWindowRawPixel(x, self.ly),
+                true => blk: {
+                    window_drawn = true;
+                    break :blk self.getWindowRawPixel(x, self.ly);
+                },
                 false => self.getBgRawPixel(x, self.ly),
             },
             false => 0,
@@ -234,6 +258,10 @@ fn renderLine(self: *Self) void {
         const pixel = self.mixPixels(bg_raw, obj);
 
         self.framebuf[@as(usize, self.ly) * 160 + x] = pixel;
+    }
+
+    if (window_drawn) {
+        self.window_line +%= 1;
     }
 }
 
@@ -246,8 +274,9 @@ pub fn stepVblankLine(self: *Self) void {
 
         if (self.ly == 154) {
             self.ly = 0;
-            self.mode = .oam_scan_2;
+            self.setMode(.oam_scan_2);
             self.frame_ready = true;
+            self.window_line = 0;
         }
     }
 }
@@ -283,16 +312,18 @@ pub fn readStat(self: *Self) u8 {
 pub fn disableLcd(self: *Self) void {
     self.ly = 0;
     self.line_dot = 0;
-    self.mode = .hblank_0;
+    self.setMode(.hblank_0);
     self.frame_ready = false;
+    self.window_line = 0;
 }
 
 pub fn enableLcd(self: *Self) void {
     self.ly = 0;
     self.line_dot = 0;
-    self.mode = .oam_scan_2;
+    self.setMode(.oam_scan_2);
     self.frame_ready = false;
     self.need_blank_framebuf = true;
+    self.window_line = 0;
     self.checkStatInterrupt();
 }
 
@@ -320,12 +351,12 @@ pub fn isOamAccessible(self: *Self) bool {
 
 pub fn readVram(self: *Self, addr: u16) u8 {
     if (!self.isVramAccessible()) return 0xFF;
-    return self.vram[addr - 0x8000];
+    return self.vram[vramIndexFromAddr(addr)];
 }
 
 pub fn writeVram(self: *Self, addr: u16, val: u8) void {
     if (!self.isVramAccessible()) return;
-    self.vram[addr - 0x8000] = val;
+    self.vram[vramIndexFromAddr(addr)] = val;
 }
 
 pub fn readOam(self: *Self, addr: u16) u8 {
@@ -407,10 +438,16 @@ pub inline fn writeObp1(self: *Self, val: u8) void {
     self.obp1 = val;
 }
 
+fn writeDma(self: *Self, val: u8) void {
+    self.dma_active = true;
+    self.dma_source = @as(u16, val) << 8;
+    self.dma_index = 0;
+}
+
 /// The various STAT interrupt sources (modes 0-2 and LYC=LY) have their state (inactive=low and active=high) logically ORed into a shared “STAT interrupt line” if their respective enable bit is turned on. A STAT interrupt will be triggered by a rising edge (transition from low to high) on the STAT interrupt line.
 /// More details: https://gbdev.io/pandocs/Interrupt_Sources.html#int-48--stat-interrupt
 pub fn getStatLine(self: *Self) bool {
-    const lyc_eq_ly = self.ly == self.lyc and self.stat.lyc_eq_ly;
+    const lyc_eq_ly = self.ly == self.lyc and self.stat.lyc_select;
     const mode0 = self.mode == .hblank_0 and self.stat.mode0_select;
     const mode1 = self.mode == .vblank_1 and self.stat.mode1_select;
     const mode2 = self.mode == .oam_scan_2 and self.stat.mode2_select;
@@ -465,7 +502,7 @@ inline fn getTileDataAddr(self: *Self, tile_id: u8) u16 {
         .mem_8000_8fff => return 0x8000 + @as(u16, tile_id) * 16,
         .mem_8800_97ff => {
             const tile_id_signed: i8 = @bitCast(tile_id);
-            return @as(u16, 0x9000) + @as(u16, @bitCast(@as(i16, tile_id_signed) * 16));
+            return @as(u16, 0x9000) +% @as(u16, @bitCast(@as(i16, tile_id_signed) * 16));
         },
     }
     unreachable;
@@ -477,16 +514,12 @@ fn getTilePixelByTileId(self: *Self, tile_id: u8, row: u3, col: u3) u2 {
     return self.readTilePixel(index, row, col);
 }
 
-inline fn bgMapAddr(self: *Self) u16 {
-    return self.lcdc.bg_tile_map_area.start();
-}
-
 /// bg_x and bg_y are coordinates within the 256 x 256 background tile map
 /// Due to scrolling, bg_x and bg_y may be >=256 and need to do wrapping
-fn getBgTile(self: *Self, bg_x: usize, bg_y: usize) u8 {
+fn readBgTileId(self: *Self, bg_x: usize, bg_y: usize) u8 {
     const tile_x: u5 = @intCast((bg_x / 8) % 32);
     const tile_y: u5 = @intCast((bg_y / 8) % 32);
-    const map_addr = self.bgMapAddr();
+    const map_addr = self.lcdc.bg_tile_map_area.start();
     const tile_addr: u16 = map_addr + @as(u16, tile_y) * 32 + tile_x;
     return self.vram[vramIndexFromAddr(tile_addr)];
 }
@@ -494,7 +527,7 @@ fn getBgTile(self: *Self, bg_x: usize, bg_y: usize) u8 {
 fn getBgRawPixel(self: *Self, screen_x: usize, screen_y: usize) u2 {
     const bg_x = (self.scx + screen_x) % 256;
     const bg_y = (self.scy + screen_y) % 256;
-    const tile_id = self.getBgTile(bg_x, bg_y);
+    const tile_id = self.readBgTileId(bg_x, bg_y);
     const row: u3 = @intCast(bg_y % 8);
     const col: u3 = @intCast(bg_x % 8);
     return self.getTilePixelByTileId(tile_id, row, col);
@@ -535,7 +568,8 @@ fn getWindowRawPixel(self: *Self, screen_x: usize, screen_y: usize) u2 {
     // for calling this fn, and that does the check already.
     // TODO: Figure out whether I need wx as an int or uint is ok
     const window_x = screen_x - (@as(usize, self.wx) -| 7);
-    const window_y = screen_y - self.wy;
+    const window_y = self.window_line;
+    _ = screen_y;
     const tile_id = self.getWindowTileId(window_x, window_y);
     const row: u3 = @intCast(window_y % 8);
     const col: u3 = @intCast(window_x % 8);

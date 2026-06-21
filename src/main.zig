@@ -132,13 +132,12 @@ pub fn main(init: std.process.Init) !void {
 
     var frametime = Frametime.init();
     var next_frame_time: u64 = sdl.SDL_GetTicksNS();
-    var display_changed = false;
     var done = false;
     var perf = Perf{};
     var t_cycles: usize = 0;
 
     // Broad strategy:
-    // 1. Step the CPU 70,224 times
+    // 1. Step the CPU and PPU 70,224 times
     // 2. Render one frame
     // 3. Target config.window.target_fps (~59.73 fps) with a deadline delay
     game_loop: while (!done) {
@@ -165,7 +164,8 @@ pub fn main(init: std.process.Init) !void {
 
         perf.poll_ns += perf.lap();
 
-        // Step the CPU
+        // Step the CPU and PPU
+        // Timers are stepped within the cpu.step()
         while (t_cycles <= config.cpu.cycles_per_frame) {
             const step_result = cpu.step();
             switch (step_result.new_state) {
@@ -183,28 +183,21 @@ pub fn main(init: std.process.Init) !void {
 
             const m_cycles_used = step_result.t_cycles_used / 4;
             for (0..m_cycles_used) |_| {
-                ppu.step();
+                ppu.step(&memory);
             }
 
-            // display_changed = step_result.display_changed;
-            display_changed = ppu.frame_ready;
             t_cycles += step_result.t_cycles_used;
-
-            // timers.tick(step_result.t_cycles_used, &interrupts);
         }
         // Save the balance for the next round
         t_cycles %= config.cpu.cycles_per_frame;
+
         perf.cpu_steps_ns += perf.lap();
 
         if (display_enabled) {
             // Present the screen at the target fps
-            if (display_changed) {
-                // for (&fake_screen) |*p| {
-                //     p.* = rng.uintAtMost(u2, 3);
-                // }
-                // try renderer.paint(&fake_screen, &palette);
+            if (ppu.frame_ready) {
                 try renderer.paint(&ppu.framebuf, &palette);
-                display_changed = false;
+                ppu.frame_ready = false;
                 perf.renderer_ns += perf.lap();
             }
         }
@@ -213,17 +206,17 @@ pub fn main(init: std.process.Init) !void {
 
         // Deadline based timer
         next_frame_time += frametime.getNextFrameDurationNs();
-        // const sleep_ns = next_frame_time -| sdl.SDL_GetTicksNS();
-        // if (sleep_ns > 0)
-        //     sdl.SDL_DelayNS(sleep_ns);
+        const sleep_ns = next_frame_time -| sdl.SDL_GetTicksNS();
+        if (sleep_ns > 0)
+            sdl.SDL_DelayNS(sleep_ns);
     }
 
     // print performance metrics
-    // std.debug.print("Per frame performance metrics in ns\n", .{});
-    // std.debug.print("Frames:     {d}\n", .{perf.frames});
-    // std.debug.print("PollEvent:  {d}\n", .{perf.poll_ns / perf.frames});
-    // std.debug.print("CPU steps:  {d}\n", .{perf.cpu_steps_ns / perf.frames});
-    // std.debug.print("Renderer:   {d}\n", .{perf.renderer_ns / perf.frames});
+    std.debug.print("Per frame performance metrics in ns\n", .{});
+    std.debug.print("Frames:     {d}\n", .{perf.frames});
+    std.debug.print("PollEvent:  {d}\n", .{perf.poll_ns / perf.frames});
+    std.debug.print("CPU steps:  {d}\n", .{perf.cpu_steps_ns / perf.frames});
+    std.debug.print("Renderer:   {d}\n", .{perf.renderer_ns / perf.frames});
     // std.debug.print("Timers:     {d}\n", .{perf.timers_ns / perf.cycles});
     // std.debug.print("Audio tick: {d}\n", .{perf.audio_tick_ns / perf.cycles});
 }
