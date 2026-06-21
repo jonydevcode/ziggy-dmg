@@ -18,6 +18,9 @@ vram: [8192]u8 = @splat(0),
 oam: [160]u8 = @splat(0),
 framebuf: [160 * 144]u2 = @splat(0), // each pixel is 2 bits, representing 4 colours
 
+selected_objs: [10]SelectedObj = [_]SelectedObj{.{}} ** 10,
+selected_objs_len: usize = 0,
+
 // Registers (addr $FF40 through $FF4B)
 lcdc: Lcdc = Lcdc.fromByte(0), // LCD control
 stat: Stat = Stat.fromByte(0), // LCD status and STAT interrupt
@@ -98,6 +101,26 @@ pub const Lcdc = packed struct(u8) {
     }
 };
 
+pub const ObjAttr = packed struct(u8) {
+    unused: u4, // in DMG, first 4 bits unused
+    dmg_palette: DmgPalette,
+    x_flip: Flip,
+    y_flip: Flip,
+    priority: Priority,
+
+    pub const DmgPalette = enum(u1) { obp0, obp1 };
+    pub const Flip = enum(u1) { normal, mirrored };
+    pub const Priority = enum(u1) { above_bg_window, below_bg_window };
+
+    pub fn fromByte(byte: u8) ObjAttr {
+        return @bitCast(byte);
+    }
+
+    pub fn toByte(self: ObjAttr) u8 {
+        return @bitCast(self);
+    }
+};
+
 pub const Stat = packed struct(u8) {
     mode: PpuMode = .hblank_0, // bits 0-1
     lyc_eq_ly: bool = false,
@@ -114,6 +137,22 @@ pub const Stat = packed struct(u8) {
     pub fn toByte(self: Stat) u8 {
         return @bitCast(self);
     }
+};
+
+pub const SelectedObj = struct {
+    oam_index: u8 = 0,
+    x: u8 = 0,
+    y: u8 = 0,
+    tile: u8 = 0,
+    attr: ObjAttr = ObjAttr.fromByte(0),
+};
+
+pub const ObjPixel = struct {
+    exists: bool,
+    raw: u2,
+    attr: ObjAttr,
+    oam_index: u8,
+    obj_x: i16,
 };
 
 pub fn init(interrupts: *Interrupts) Self {
@@ -148,13 +187,15 @@ pub fn stepDot(self: *Self) void {
 pub fn stepVisibleLine(self: *Self) void {
     self.line_dot += 1;
 
+    // mode2: 0-79
     if (self.line_dot == 80) {
         self.setMode(.drawing_3);
         return;
     }
 
+    // mode3: 80-251 (actually variable)
     if (self.line_dot == 252) {
-        self.renderBgAndWindowLine();
+        self.renderLine();
         self.setMode(.hblank_0);
         return;
     }
@@ -176,11 +217,11 @@ pub fn stepVisibleLine(self: *Self) void {
     }
 }
 
-fn renderBgAndWindowLine(self: *Self) void {
+fn renderLine(self: *Self) void {
     if (self.ly >= 144) return; // not visible
 
     for (0..160) |x| {
-        const pixel = switch (self.lcdc.bg_window_enable) {
+        const bg_raw = switch (self.lcdc.bg_window_enable) {
             true => switch (self.isWindowCoveringPixel(x, self.ly)) {
                 true => self.getWindowRawPixel(x, self.ly),
                 false => self.getBgRawPixel(x, self.ly),
@@ -188,11 +229,10 @@ fn renderBgAndWindowLine(self: *Self) void {
             false => 0,
         };
 
-        // const pixel = if (self.lcdc.bg_window_enable)
-        //     self.rawToPalette(self.getBgRawPixel(x, self.ly))
-        // else
-        //     0;
-        // std.debug.print("self.ly = {d}, x = {d}\n", .{ self.ly, x });
+        const x_int: i16 = @intCast(x);
+        const obj = self.getHighestPriorityObjPixel(x_int);
+        const pixel = self.mixPixels(bg_raw, obj);
+
         self.framebuf[@as(usize, self.ly) * 160 + x] = pixel;
     }
 }
@@ -351,6 +391,22 @@ pub inline fn writeWx(self: *Self, val: u8) void {
     self.wx = val;
 }
 
+pub inline fn readObp0(self: *Self) u8 {
+    return self.obp0;
+}
+
+pub inline fn writeObp0(self: *Self, val: u8) void {
+    self.obp0 = val;
+}
+
+pub inline fn readObp1(self: *Self) u8 {
+    return self.obp1;
+}
+
+pub inline fn writeObp1(self: *Self, val: u8) void {
+    self.obp1 = val;
+}
+
 /// The various STAT interrupt sources (modes 0-2 and LYC=LY) have their state (inactive=low and active=high) logically ORed into a shared “STAT interrupt line” if their respective enable bit is turned on. A STAT interrupt will be triggered by a rising edge (transition from low to high) on the STAT interrupt line.
 /// More details: https://gbdev.io/pandocs/Interrupt_Sources.html#int-48--stat-interrupt
 pub fn getStatLine(self: *Self) bool {
@@ -378,6 +434,11 @@ pub fn checkStatInterrupt(self: *Self) void {
 
 fn setMode(self: *Self, mode: PpuMode) void {
     self.mode = mode;
+
+    if (mode == .oam_scan_2 and self.ly < 144) {
+        self.selectObjsForLine();
+    }
+
     self.checkStatInterrupt();
 }
 
@@ -441,7 +502,7 @@ fn getBgRawPixel(self: *Self, screen_x: usize, screen_y: usize) u2 {
 
 /// Each raw value is a 2 bit colour ID, which indexes into the BGP register
 /// to retrieve the actual palette colour (also 2 bits).
-fn rawToPalette(self: *Self, raw: u2) u2 {
+fn rawBgToPalette(self: *Self, raw: u2) u2 {
     return @intCast((self.bgp >> (@as(u3, raw) * 2)) & 0b11);
 }
 
@@ -479,6 +540,153 @@ fn getWindowRawPixel(self: *Self, screen_x: usize, screen_y: usize) u2 {
     const row: u3 = @intCast(window_y % 8);
     const col: u3 = @intCast(window_x % 8);
     return self.getTilePixelByTileId(tile_id, row, col);
+}
+
+/// During each scanline’s OAM scan, the PPU compares LY (using LCDC bit 2 to
+/// determine their size) to each object’s Y position to select first (up to) 10 objects
+/// to be drawn on that line.
+/// See: https://gbdev.io/pandocs/OAM.html#selection-priority
+fn selectObjsForLine(self: *Self) void {
+    self.selected_objs_len = 0;
+    const height = self.lcdc.obj_size.height();
+
+    // total of 40 objects, each is 4 bytes
+    // byte 0 - y pos + 16
+    // byte 1 - x pos + 8
+    // byte 2 - tile ID
+    // byte 3 - attributes
+    for (0..40) |i| {
+        const raw_y = self.oam[i * 4 + 0];
+        const raw_x = self.oam[i * 4 + 1];
+        const tile = self.oam[i * 4 + 2];
+        const attr = self.oam[i * 4 + 3];
+
+        const obj_y: i16 = @as(i16, raw_y) - 16;
+
+        if (self.ly >= obj_y and self.ly < obj_y + height) {
+            self.selected_objs[self.selected_objs_len] = SelectedObj{
+                .y = raw_y,
+                .x = raw_x,
+                .tile = tile,
+                .attr = ObjAttr.fromByte(attr),
+            };
+            self.selected_objs_len += 1;
+
+            if (self.selected_objs_len == 10) return;
+        }
+    }
+}
+
+inline fn objTileAddrById(tile_id: u8) u16 {
+    return 0x8000 + @as(u16, tile_id) * 16;
+}
+
+fn getObjPixel(self: *Self, obj: SelectedObj, screen_x: i16) ObjPixel {
+    var result = ObjPixel{
+        .exists = false,
+        .raw = 0,
+        .attr = obj.attr,
+        .oam_index = obj.oam_index,
+        .obj_x = @as(i16, obj.x) - 8,
+    };
+
+    // Translate the raw values into actual values based on the mapping
+    const obj_x: i16 = @as(i16, obj.x) - 8;
+    const obj_y: i16 = @as(i16, obj.y) - 16;
+
+    // if object is not visible, return the non-existent object
+    if ((screen_x < obj_x) or (screen_x >= obj_x + 8)) return result;
+
+    const height = self.lcdc.obj_size.height();
+    var row = @as(i16, self.ly) - obj_y;
+    var col = screen_x - obj_x;
+
+    if (obj.attr.y_flip == .mirrored) {
+        row = height - 1 - row;
+    }
+    if (obj.attr.x_flip == .mirrored) {
+        col = 7 - col;
+    }
+    var tile_id = obj.tile;
+
+    // Handle 8x16 tile mode
+    if (height == 16) {
+        // In 8 × 16 object mode, the Game Boy ignores bit 0 of the object tile number.
+        tile_id &= 0xFE;
+        // Check if we're in the top tile or the bottom tile (tile_id or tile_id + 1)
+        if (row >= 8) {
+            tile_id += 1;
+            row -= 8;
+        }
+    }
+
+    const addr = objTileAddrById(tile_id);
+    result.raw = self.readTilePixel(vramIndexFromAddr(addr), @intCast(row), @intCast(col));
+    // Object colour value of 0 means transparent, don't draw
+    result.exists = if (result.raw != 0) true else false;
+
+    return result;
+}
+
+/// Choose the winning object pixel among object pixels. If no objects are selected,
+/// returns a pixel that does not exist.
+fn getHighestPriorityObjPixel(self: *Self, screen_x: i16) ObjPixel {
+    var best = ObjPixel{
+        .exists = false,
+        .raw = 0,
+        .attr = ObjAttr.fromByte(0),
+        .oam_index = 0,
+        .obj_x = 0,
+    };
+
+    for (self.selected_objs[0..self.selected_objs_len]) |obj| {
+        const candidate = self.getObjPixel(obj, screen_x);
+        if (!candidate.exists) continue;
+        if (!best.exists) {
+            best = candidate;
+            continue;
+        }
+        if (candidate.obj_x < best.obj_x) {
+            best = candidate;
+            continue;
+        }
+        if (candidate.obj_x == best.obj_x and
+            candidate.oam_index < best.oam_index)
+        {
+            best = candidate;
+            continue;
+        }
+    }
+
+    return best;
+}
+
+inline fn rawObjToPalette(palette: u8, raw: u2) u2 {
+    return @intCast((palette >> (@as(u3, raw) * 2)) & 0b11);
+}
+
+fn objPixelToPalette(self: *Self, obj: ObjPixel) u2 {
+    const palette = switch (obj.attr.dmg_palette) {
+        .obp0 => self.obp0,
+        .obp1 => self.obp1,
+    };
+    return rawObjToPalette(palette, obj.raw);
+}
+
+fn mixPixels(self: *Self, bg_raw: u2, obj: ObjPixel) u2 {
+    if (!obj.exists or !self.lcdc.obj_enable) {
+        if (self.lcdc.bg_window_enable) {
+            return self.rawBgToPalette(bg_raw);
+        } else {
+            return 0; // white / off colour
+        }
+    }
+
+    if (obj.attr.priority == .below_bg_window and self.lcdc.bg_window_enable and bg_raw != 0) {
+        return self.rawBgToPalette(bg_raw);
+    }
+
+    return self.objPixelToPalette(obj);
 }
 
 test "Stat tests" {
