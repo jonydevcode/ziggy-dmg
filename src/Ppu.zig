@@ -439,6 +439,7 @@ pub inline fn writeObp1(self: *Self, val: u8) void {
 }
 
 pub fn writeDma(self: *Self, val: u8) void {
+    self.dma = val;
     self.dma_active = true;
     self.dma_source = @as(u16, val) << 8;
     self.dma_index = 0;
