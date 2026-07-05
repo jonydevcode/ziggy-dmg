@@ -3,7 +3,9 @@
 ![No LLM Generation](https://img.shields.io/badge/LLM%20generation-none-brightgreen)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
-An independent emulator written in Zig, compatible with Game Boy games. Uses SDL3 for display, inputs, and audio. Not affiliated with or endorsed by Nintendo. Game Boy is a trademark of Nintendo.
+An independent emulator written in Zig, compatible with Game Boy games. Uses SDL3 for display and inputs. Not affiliated with or endorsed by Nintendo. Game Boy is a trademark of Nintendo.
+
+![Screenshot of the emulator running Tetris](screenshots/04_tetris.png)
 
 ## AI Use Disclosure
 
@@ -11,7 +13,9 @@ The current contents of this repository were written **without** LLM/AI code gen
 
 ## Devlog
 
+- **2026-07-05**: Implemented Joypad. Tested Tetris and Zelda and they render fine.
 - **2026-06-20**: First visuals from the PPU seen on the SDL3 renderer.
+  - ![Failed dmg-acid2](screenshots/02_dmg-acid2_fail.png)
 - **2026-06-15**: Passed all tests in `mooneye-test-suite/acceptance/timer`.
 - **2026-06-12**: Passed the full blargg's `cpu_instrs` test rom.
 - **2026-06-08**: Fixed a bunch of CPU instruction bugs. Blargg's `cpu_instrs` individual test roms 03 to 11 now pass.
@@ -36,6 +40,12 @@ zig build
 ```bash
 zig build run -- rom_file.gb
 ```
+
+## Screenshots
+
+![Passing cpu_instrs test](screenshots/01_cpu_instrs_passed.png)
+![Passed dmg-acid2](screenshots/03_dmg-acid2_pass.png)
+![Zelda running](screenshots/05_zelda.png)
 
 ## Acknowledgments
 

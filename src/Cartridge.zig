@@ -30,8 +30,6 @@ pub fn init(
     const rom_size = getRomSize(rom[0x148]);
     const ram_size = getRamSize(rom[0x149]);
 
-    // std.debug.print("Detected\nrom_size = {d}\nram_size = {d}\n", .{ rom_size, ram_size });
-
     return Self{
         .allocator = allocator,
         .rom = rom,
@@ -40,6 +38,11 @@ pub fn init(
         .rom_size = rom_size,
         .ram_size = ram_size,
     };
+}
+
+pub fn deinit(self: *Self) void {
+    self.allocator.free(self.rom);
+    self.allocator.free(self.ram);
 }
 
 fn getMapper(byte: u8) mapper.Mapper {
@@ -82,10 +85,6 @@ fn getRamSize(byte: u8) usize {
         0x5 => 8 * ram_bank_size,
         else => std.debug.panic("Invalid 0x149 value: {X}", .{byte}),
     };
-}
-
-pub fn deinit(self: *Self) void {
-    self.allocator.free(self.rom);
 }
 
 pub fn read(self: *Self, addr: u16) u8 {
