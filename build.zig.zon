@@ -7,8 +7,8 @@
     .minimum_zig_version = "0.16.0",
     .dependencies = .{
         .sdl = .{
-            .url = "https://github.com/castholm/SDL/archive/refs/tags/v0.5.1+3.4.10.tar.gz",
-            .hash = "sdl-0.5.1+3.4.10-SDL--kbMpgGMXke11Ujh5HUPKch7G_SUAS12LI0QFoqj",
+            .url = "https://github.com/castholm/SDL/archive/refs/tags/v0.5.2+3.4.12.tar.gz",
+            .hash = "sdl-0.5.2+3.4.12-SDL--qPKpwHc40bqAlYs7W9pXJVyLwsGDNa4shNXbOZr",
         },
     },
     .paths = .{
