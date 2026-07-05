@@ -9,6 +9,7 @@ const Timers = @import("Timers.zig");
 const util = @import("util.zig");
 const Cartridge = @import("Cartridge.zig");
 const Ppu = @import("Ppu.zig");
+const Joypad = @import("Joypad.zig");
 
 // rom: []const u8,
 cartridge: *Cartridge,
@@ -21,15 +22,17 @@ extram: [config.cpu.extram_size]u8 = @splat(0),
 interrupts: *Interrupts,
 timers: *Timers,
 ppu: *Ppu,
+joypad: *Joypad,
 
 io_unused: [128]u8 = @splat(0),
 
-pub fn init(cartridge: *Cartridge, interrupts: *Interrupts, timers: *Timers, ppu: *Ppu) Self {
+pub fn init(cartridge: *Cartridge, interrupts: *Interrupts, timers: *Timers, ppu: *Ppu, joypad: *Joypad) Self {
     return Self{
         .cartridge = cartridge,
         .interrupts = interrupts,
         .timers = timers,
         .ppu = ppu,
+        .joypad = joypad,
     };
 }
 
@@ -67,6 +70,7 @@ pub fn peek(self: *Self, addr: u16) u8 {
     } else if (0xFF00 <= addr and addr <= 0xFF7F) {
         // I/O Registers
         switch (addr) {
+            0xFF00 => return self.joypad.readReg(),
             0xFF04 => return self.timers.readDiv(),
             0xFF05 => return self.timers.readTima(),
             0xFF06 => return self.timers.readTma(),
@@ -133,6 +137,7 @@ pub fn write(self: *Self, addr: u16, val: u8) void {
     } else if (0xFF00 <= addr and addr <= 0xFF7F) {
         // I/O Registers
         switch (addr) {
+            0xFF00 => self.joypad.writeReg(val),
             0xFF01 => std.debug.print("{c}", .{val}), // for blargg's test roms
             0xFF04 => self.timers.writeDiv(val),
             0xFF05 => self.timers.writeTima(val),

@@ -1,8 +1,11 @@
 const std = @import("std");
 const sdl = @import("sdl");
-const controls = @import("controls.zig");
-const Button = controls.Button;
-const State = controls.State;
+// const controls = @import("controls.zig");
+// const Button = controls.Button;
+// const State = controls.State;
+const Joypad = @import("Joypad.zig");
+const Button = Joypad.Button;
+const State = Joypad.State;
 
 pub const InputResult = union(enum) {
     none,

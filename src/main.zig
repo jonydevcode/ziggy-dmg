@@ -12,6 +12,7 @@ const Memory = @import("Memory.zig");
 const Interrupts = @import("Interrupts.zig");
 const Timers = @import("Timers.zig");
 const Ppu = @import("Ppu.zig");
+const Joypad = @import("Joypad.zig");
 
 const display_enabled = true;
 const gameboy_doctor_enabled = false;
@@ -75,10 +76,11 @@ pub fn main(init: std.process.Init) !void {
     defer cartridge.deinit();
 
     // CPU
+    var joypad = Joypad{};
     var interrupts = Interrupts.init();
     var ppu = Ppu.init(&interrupts);
     var timers = Timers.init(&interrupts);
-    var memory = Memory.init(&cartridge, &interrupts, &timers, &ppu);
+    var memory = Memory.init(&cartridge, &interrupts, &timers, &ppu, &joypad);
     var cpu = Cpu.init(allocator, rng, &memory, &interrupts, &timers);
     defer cpu.deinit();
 
@@ -171,7 +173,7 @@ pub fn main(init: std.process.Init) !void {
                         .reset => {},
                         .quit => done = true,
                         .game => |action| {
-                            _ = action;
+                            joypad.updateButton(action.button, action.state, &interrupts);
                         },
                         .none => {},
                     }
